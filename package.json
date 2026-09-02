@@ -1,0 +1,15 @@
+{
+  "name": "turbo-kart-grand-prix",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mario Kart–inspired 3D kart racer in Three.js — fully procedural assets, built by Claude Fable 5.1 from a single prompt",
+  "scripts": {
+    "start": "node server.js 5173",
+    "test:setup": "npm i three@0.160.0 jsdom --no-save --no-package-lock",
+    "test": "node tests/kart-sim.mjs && node tests/systems-sim.mjs && node tests/verify-track.mjs && node tests/verify-environment.mjs && node tests/audio-smoke.mjs && node tests/hud-smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

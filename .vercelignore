@@ -1,0 +1,8 @@
+# Only the playable site is deployed; tooling and docs stay in the repo.
+node_modules
+tests
+server.js
+package.json
+README.md
+docs/ARCHITECTURE.md
+.gitignore
