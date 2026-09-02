@@ -6,7 +6,9 @@
 
 ### [▶ Play it live](https://turbo-kart-grand-prix.vercel.app)
 
-<img src="docs/race.jpg" alt="Boosting through the first sweeper" width="800" />
+<a href="docs/demo.mp4"><img src="docs/demo.gif" alt="Gameplay demo" width="800" /></a>
+
+<sub>Gameplay demo — <a href="docs/demo.mp4">watch the full 34-second capture with sound</a></sub>
 
 *Built by **Claude Fable 5.1** in a single shot — one prompt, zero hand-written code, no external assets.*
 
@@ -86,9 +88,9 @@ src/particles.js          pooled point-sprite effects
 src/audio.js              WebAudio synth
 src/hud.js                DOM HUD, minimap, menus
 tests/                    Node test harnesses
-docs/                     architecture contract + screenshots
+docs/                     architecture contract, screenshots, demo video
 ```
 
 <div align="center">
-<img src="docs/menu.jpg" width="32%" /> <img src="docs/hill.jpg" width="32%" /> <img src="docs/star.jpg" width="32%" />
+<img src="docs/race.jpg" width="24%" /> <img src="docs/menu.jpg" width="24%" /> <img src="docs/hill.jpg" width="24%" /> <img src="docs/star.jpg" width="24%" />
 </div>
