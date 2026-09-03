@@ -208,3 +208,26 @@ Provided. Contains import map, `<canvas id="game">`, `#hud`, `#menu`, `#results`
 
 ## Performance targets
 60 fps on an integrated GPU at 1080p: ≤ 400 draw calls, InstancedMesh for trees/spectators/particles, merged geometry for track decorations, shadow map 2048.
+
+---
+
+## src/assets.js — `export class AssetLibrary` (added with the Tripo asset set)
+
+```js
+const assets = new AssetLibrary();            // baseUrl defaults to 'assets/models/'
+await assets.loadAll((done, total, name) => …);   // never rejects; failures land in assets.errors
+assets.has(name)                               // true when the GLB loaded and was normalised
+assets.clone(name, { tint, castShadow, receiveShadow })   // Group of identity-transform meshes
+assets.instanced(name, count)                  // Group with setMatrixAt(i, m4), finish(), parts[]
+assets.triangles(name)
+```
+
+`ASSET_MANIFEST` (same file) is the single source of truth for normalisation: target `size` along an
+`axis`, `ground` (rest on y = 0) or vertically centred, optional `rotX/rotY/rotZ`, and `tint` for
+models whose white paint should take a per-instance colour (kart body, driver). The normalisation is
+baked into the geometry at load time, so consumers never scale or rotate the models themselves.
+
+Consumers: `Kart` (`opts.assets` → `buildKartModelFromAssets`), `Track(scene, renderer, assets)`,
+`Environment(scene, renderer, assets)`, `ItemManager(scene, track, particles, audio, assets)`. Every
+consumer keeps its procedural builder as the fallback when `assets` is null or an asset is missing,
+which is also the path the Node tests exercise.

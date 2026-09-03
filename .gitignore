@@ -2,3 +2,10 @@ node_modules/
 package-lock.json
 .vercel/
 .DS_Store
+
+# local tooling / generation scratch
+.claude/
+.tripo/
+tripo-out/
+tripo-assets.yaml.state.json
+shots/

@@ -486,6 +486,10 @@ AudioManager.SFX = {
     this._tone({ type: 'sine', freq: 95, freqEnd: 38, dur: 0.16, gain: 0.5, attack: 0.003 });
     this._noise({ dur: 0.1, gain: 0.25, filter: 'lowpass', freq: 350, Q: 0.7 });
   },
+  bump() {
+    this._tone({ type: 'triangle', freq: 260, freqEnd: 110, dur: 0.14, gain: 0.35, attack: 0.002 });
+    this._noise({ dur: 0.07, gain: 0.18, filter: 'bandpass', freq: 1400, Q: 1.2 });
+  },
   menu() {
     this._tone({ type: 'square', freq: 1500, dur: 0.025, gain: 0.12, attack: 0.002 });
     this._tone({ type: 'sine', freq: 700, dur: 0.06, gain: 0.1, start: 0.01 });

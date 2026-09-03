@@ -1,6 +1,7 @@
 // Turbo Kart Grand Prix — environment.js
 // Sky dome (gradient + sun disc), sun light with stable shadows, hemisphere light, fog and
-// drifting low-poly clouds. Everything procedural.
+// drifting low-poly clouds. Everything procedural, except that the clouds use the GLB model
+// when an asset library (assets.js) is passed in.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -73,9 +74,11 @@ function makeCloudGeometry(rand, puffs) {
 }
 
 export class Environment {
-  constructor(scene, renderer = null) {
+  /** @param {object} [assets] optional GLB library (assets.js); clouds use it when `has('cloud')`. */
+  constructor(scene, renderer = null, assets = null) {
     this.scene = scene;
     this.renderer = renderer;
+    this.assets = assets;
     this.group = new THREE.Group();
     this.group.name = 'environment';
 
@@ -146,7 +149,7 @@ export class Environment {
     this._lUp = new THREE.Vector3().crossVectors(this.sunDir, this._lRight).normalize();
     this._tmp = new THREE.Vector3();
 
-    // --- Clouds (3 shape variants, instanced) ---
+    // --- Clouds (GLB instanced, or 3 procedural shape variants) ---
     this._buildClouds();
 
     scene.add(this.group);
@@ -154,41 +157,51 @@ export class Environment {
 
   _buildClouds() {
     const rand = mulberry32(2024);
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x2b3a4d, emissiveIntensity: 0.35 });
-    const variants = [makeCloudGeometry(rand, 5), makeCloudGeometry(rand, 6), makeCloudGeometry(rand, 7)];
     const total = 36;
-    const per = Math.ceil(total / variants.length);
+    // Instancing targets: one GLB group, or three procedural shape variants. Every target has
+    // setMatrixAt(i, m) plus the InstancedMesh parts whose instanceMatrix is flagged after updates.
+    const useAsset = !!(this.assets && this.assets.has('cloud'));
+    let targets;
+    if (useAsset) {
+      const group = this.assets.instanced('cloud', total, { castShadow: false, receiveShadow: false });
+      group.name = 'clouds';
+      targets = [{ target: group, parts: group.parts, count: total }];
+    } else {
+      const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x2b3a4d, emissiveIntensity: 0.35 });
+      const variants = [makeCloudGeometry(rand, 5), makeCloudGeometry(rand, 6), makeCloudGeometry(rand, 7)];
+      const per = Math.ceil(total / variants.length);
+      targets = variants.map((geo, v) => {
+        const mesh = new THREE.InstancedMesh(geo, mat, per);
+        mesh.name = 'clouds' + v;
+        return { target: mesh, parts: [mesh], count: per };
+      });
+    }
     this.clouds = [];
+    this._cloudParts = [];
     this._cloudData = [];
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
-    for (let v = 0; v < variants.length; v++) {
-      const mesh = new THREE.InstancedMesh(variants[v], mat, per);
-      mesh.frustumCulled = false;
-      mesh.name = 'clouds' + v;
+    for (const { target, parts, count } of targets) {
       const data = [];
-      for (let i = 0; i < per; i++) {
+      for (let i = 0; i < count; i++) {
         const ang = rand() * Math.PI * 2;
         const rad = 120 + Math.sqrt(rand()) * 620;
-        const d = {
-          x: -150 + Math.cos(ang) * rad,
-          y: 80 + rand() * 80,
-          z: Math.sin(ang) * rad,
-          yaw: rand() * Math.PI * 2,
-          sx: 18 + rand() * 26,
-          sy: 14 + rand() * 12,
-          sz: 16 + rand() * 20,
-          speed: 1.8 + rand() * 1.6,
-        };
+        const d = { x: -150 + Math.cos(ang) * rad, y: 80 + rand() * 80, z: Math.sin(ang) * rad, yaw: rand() * Math.PI * 2, sx: 0, sy: 0, sz: 0, speed: 0 };
+        // GLB clouds keep their shape (uniform 0.6–1.4); the unit-size procedural blobs are stretched.
+        if (useAsset) d.sx = d.sy = d.sz = 0.6 + rand() * 0.8;
+        else { d.sx = 18 + rand() * 26; d.sy = 14 + rand() * 12; d.sz = 16 + rand() * 20; }
+        d.speed = 1.8 + rand() * 1.6;
         data.push(d);
         p.set(d.x, d.y, d.z);
-        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), d.yaw);
+        q.setFromAxisAngle(_yAxis, d.yaw);
         s.set(d.sx, d.sy, d.sz);
         m.compose(p, q, s);
-        mesh.setMatrixAt(i, m);
+        target.setMatrixAt(i, m);
       }
-      mesh.instanceMatrix.needsUpdate = true;
-      this.group.add(mesh);
-      this.clouds.push(mesh);
+      // Clouds drift and wrap, so they are never frustum culled (matrices are flagged here, no finish()).
+      for (const part of parts) { part.instanceMatrix.needsUpdate = true; part.frustumCulled = false; }
+      this.group.add(target);
+      this.clouds.push(target);
+      this._cloudParts.push(parts);
       this._cloudData.push(data);
     }
     this._cloudM = m; this._cloudQ = q; this._cloudP = p; this._cloudS = s;
@@ -227,7 +240,7 @@ export class Environment {
     const m = this._cloudM, q = this._cloudQ, p = this._cloudP, s = this._cloudS;
     const axis = _yAxis;
     for (let v = 0; v < this.clouds.length; v++) {
-      const mesh = this.clouds[v];
+      const target = this.clouds[v];
       const data = this._cloudData[v];
       for (let i = 0; i < data.length; i++) {
         const d = data[i];
@@ -237,9 +250,10 @@ export class Environment {
         q.setFromAxisAngle(axis, d.yaw);
         s.set(d.sx, d.sy, d.sz);
         m.compose(p, q, s);
-        mesh.setMatrixAt(i, m);
+        target.setMatrixAt(i, m);
       }
-      mesh.instanceMatrix.needsUpdate = true;
+      const parts = this._cloudParts[v];
+      for (let j = 0; j < parts.length; j++) parts[j].instanceMatrix.needsUpdate = true;
     }
   }
 }

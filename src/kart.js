@@ -35,10 +35,10 @@ export const TUNING = {
   MINI_TURBO_POWER: 1.25,
   DRIFT_MIN_SPEED: 12,       // m/s needed to hop/start a drift
   DRIFT_END_SPEED: 6,        // m/s; drift collapses below this (no boost)
-  DRIFT_CHARGE_TIME: 1.2,    // s per tier
+  DRIFT_CHARGE_TIME: 1.0,    // s per tier
   DRIFT_BASE_TURN: 1.0,      // rad/s neutral drift arc (≈38 m radius at top speed)
   DRIFT_STEER_TURN: 0.9,     // ± rad/s steering into / out of the drift → 0.1 (near-straight) … 1.9 (hairpin)
-  DRIFT_SLIP_ANGLE: 0.35,    // rad the velocity lags the heading while sliding
+  DRIFT_SLIP_ANGLE: 0.45,    // rad the velocity lags the heading while sliding
   DRIFT_SLIP_RATE: 5,        // /s ease-in of the slide
   SLIP_RECOVER_RATE: 8,      // /s ease-out after the drift
   HOP_TIME: 0.28,            // s
@@ -51,6 +51,7 @@ export const TUNING = {
   CRASH_DURATION: 1.5,       // crash(): two turns + tumble + 1.5 s stun
   SPIN_DECEL: 30,            // m/s² while stunned
   WALL_SPEED_LOSS: 0.3,      // fraction lost on an impact (a fresh hit)
+  BUMP_DRAG: 5,              // 1/s decay of the shove from kart-kart bumps
   WALL_COOLDOWN: 0.3,        // s between impacts
   WALL_REHIT_GAP: 0.25,      // s off the wall before contact counts as a new impact (else it's a grind)
   WALL_GRIND_DECEL: 12,      // m/s² drag while scraping along the wall
@@ -490,6 +491,138 @@ export function buildKartModel(color, number = 1) {
 }
 
 // ----------------------------------------------------------------------------
+// Tripo asset kart (kart_body + kart_wheel + driver GLBs from src/assets.js)
+// ----------------------------------------------------------------------------
+/** Placement of the generated pieces — tuned against the shipped GLBs. */
+const GLB_KART = {
+  driverY: 0.30,        // seat height of the generated body (driver GLB is grounded at its feet)
+  driverZ: -0.18,
+  driverScale: 1.0,
+  wheelDiameter: 0.68,  // the wheel GLB is normalised to this diameter
+  wheelRimSide: 1,      // +1: the wheel GLB's rim faces +X after normalisation (left wheels are mirrored)
+  tyreTone: 0.62,       // darkens the generated tyre texture toward black rubber (applied once, shared material)
+};
+
+function collectTintMaterials(root) {
+  const out = [];
+  root.traverse((o) => { if (o.isMesh && o.material?.userData?.tint) out.push(o.material); });
+  return out;
+}
+
+function firstMeshMaterial(root) {
+  let mat = null;
+  root.traverse((o) => { if (!mat && o.isMesh && o.material) mat = o.material; });
+  return mat;
+}
+
+/**
+ * Same return shape as buildKartModel, built from the Tripo asset set. Any missing piece falls
+ * back to its procedural counterpart; returns null when the body asset itself is unavailable.
+ */
+export function buildKartModelFromAssets(assets, color, number = 1) {
+  if (!assets || typeof assets.has !== 'function' || !assets.has('kart_body')) return null;
+  const S = getShared();
+  const rr = TUNING.WHEEL_RADIUS_REAR, rf = TUNING.WHEEL_RADIUS_FRONT;
+
+  const group = new THREE.Group();
+  const body = new THREE.Group();
+  group.add(body);
+
+  // chassis (white paint takes the racer colour through the tint shader)
+  const chassis = assets.clone('kart_body', { tint: color, receiveShadow: true });
+  body.add(chassis);
+  const tinted = collectTintMaterials(chassis);
+  const bodyMat = tinted[0] ?? firstMeshMaterial(chassis) ?? new THREE.MeshStandardMaterial({ color });
+  const accentMat = tinted[1] ?? bodyMat;
+
+  const mesh = (geo, mat, parent) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    parent.add(m);
+    return m;
+  };
+
+  // wheels: pivot (steering yaw) → spinner (axle spin) → GLB wheel (or procedural tyre + rim)
+  const hasWheel = assets.has('kart_wheel');
+  const frontWheels = [], rearWheels = [];
+  for (const sx of [-1, 1]) {
+    for (const front of [true, false]) {
+      const r = front ? rf : rr;
+      const pivot = new THREE.Group();
+      pivot.position.set(sx * WHEEL_X, r, front ? WHEEL_Z : -WHEEL_Z);
+      const spinner = new THREE.Group();
+      pivot.add(spinner);
+      let tyre, rim = null;
+      if (hasWheel) {
+        tyre = assets.clone('kart_wheel');
+        tyre.scale.setScalar((2 * r) / GLB_KART.wheelDiameter);
+        tyre.rotation.y = sx === GLB_KART.wheelRimSide ? 0 : Math.PI;
+        tyre.traverse((o) => {
+          const m = o.isMesh ? o.material : null;
+          if (m && !m.userData.tyreToned) { m.color.multiplyScalar(GLB_KART.tyreTone); m.userData.tyreToned = true; }
+        });
+        spinner.add(tyre);
+      } else {
+        tyre = mesh(front ? S.tyreFront : S.tyreRear, S.mats.rubber, spinner);
+        rim = mesh(front ? S.rimFront : S.rimRear, S.mats.gold, spinner);
+      }
+      body.add(pivot);
+      (front ? frontWheels : rearWheels).push({ pivot, spinner, tyre, rim, side: sx, radius: r });
+    }
+  }
+
+  // driver (white suit + helmet take the racer colour); its steering wheel is baked into the mesh
+  const driver = new THREE.Group();
+  const driverY = assets.has('driver') ? GLB_KART.driverY : DRIVER_Y;
+  driver.position.set(0, driverY, assets.has('driver') ? GLB_KART.driverZ : -0.22);
+  body.add(driver);
+  let steeringWheel, helmet = null, visor = null, suitMat = null;
+  if (assets.has('driver')) {
+    const d = assets.clone('driver', { tint: color });
+    d.scale.setScalar(GLB_KART.driverScale);
+    driver.add(d);
+    steeringWheel = new THREE.Object3D();
+    driver.add(steeringWheel);
+  } else {
+    suitMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color).offsetHSL(0, -0.1, -0.15), metalness: 0.1, roughness: 0.6,
+    });
+    mesh(S.suit, suitMat, driver);
+    helmet = mesh(S.helmet, bodyMat, driver);
+    visor = mesh(S.visor, S.mats.visor, driver);
+    mesh(S.white, S.mats.white, driver);
+    const wheelPivot = new THREE.Group();
+    wheelPivot.position.set(0, 0.5, 0.42);
+    wheelPivot.rotation.x = -2.18;
+    driver.add(wheelPivot);
+    steeringWheel = mesh(S.steeringWheel, S.mats.dark, wheelPivot);
+  }
+
+  // exhaust tips carry the boost flames (same placement as the procedural kart)
+  const flames = [], exhaustTips = [];
+  const ex = EXHAUST;
+  for (const sx of [-1, 1]) {
+    const tip = new THREE.Object3D();
+    tip.position.set(sx * ex.x, ex.y + Math.sin(ex.angle) * ex.len, ex.z - Math.cos(ex.angle) * ex.len);
+    tip.rotation.x = ex.angle;
+    body.add(tip);
+    const flame = new THREE.Mesh(S.flame, S.mats.flame);
+    flame.visible = false;
+    flame.scale.setScalar(0.001);
+    flame.frustumCulled = false;
+    tip.add(flame);
+    flames.push(flame);
+    exhaustTips.push(tip);
+  }
+
+  return {
+    group, body, chassis, bodyMat, accentMat, suitMat, plateMat: null, plateTex: null,
+    frontWheels, rearWheels, driver, driverY, steeringWheel, helmet, visor, flames, exhaustTips,
+    fromAssets: true, number,
+  };
+}
+
+// ----------------------------------------------------------------------------
 // Kart
 // ----------------------------------------------------------------------------
 export class Kart {
@@ -541,6 +674,7 @@ export class Kart {
     this._time = 0;
     this._driftHeldPrev = false;
     this._hopArmTimer = 0;
+    this._driftRearm = 0;
     this._boostPadCooldown = 0;
     this._wallCooldown = 0;
     this._wallFreeTime = 1; // seconds since last wall contact
@@ -552,6 +686,8 @@ export class Kart {
     this._pitchTarget = 0;
     this._pitch = 0;
     this._roll = 0;
+    this._rollKick = 0;        // transient body rock from wall hits and bumps
+    this.shove = this.shove ? this.shove.set(0, 0, 0) : new THREE.Vector3(); // world-space bump velocity
     this._steerVisual = 0;
     this._spinFront = 0;
     this._spinRear = 0;
@@ -566,7 +702,7 @@ export class Kart {
     this._tmp = new THREE.Vector3();
 
     // --- visual
-    this.model = buildKartModel(this.color, index + 1);
+    this.model = (opts.assets && buildKartModelFromAssets(opts.assets, this.color, index + 1)) || buildKartModel(this.color, index + 1);
     this.group = this.model.group;
     this.group.rotation.order = 'YXZ';
     this.body = this.model.body;
@@ -658,6 +794,21 @@ export class Kart {
     return true;
   }
 
+  /** Kart-kart contact: shove away along (dirX, dirZ), rock the body, spark burst + thud. */
+  bump(dirX, dirZ, strength = 5) {
+    this.shove.x += dirX * strength;
+    this.shove.z += dirZ * strength;
+    const side = dirX * -Math.cos(this.yaw) + dirZ * Math.sin(this.yaw); // > 0: shoved toward our right
+    this._rollKick = -side * 0.35;
+    if (this.particles?.emitPop) {
+      const p = this.group.position;
+      this._tmp.set(p.x - dirX * 0.9, p.y + 0.5, p.z - dirZ * 0.9);
+      this.particles.emitPop(this._tmp, 0xfff2a8);
+    }
+    this.audio?.play?.('bump');
+    return true;
+  }
+
   /** Bomb / lightning-strength hit: two turns + tumble, 1.5 s stun. Ignored while invincible. */
   crash() {
     if (this.state.invincibleTimer > 0) return false;
@@ -701,6 +852,7 @@ export class Kart {
     this.input = Kart.freshInput();
     this._driftHeldPrev = false;
     this._hopArmTimer = 0;
+    this._driftRearm = 0;
     this._boostPadCooldown = 0;
     this._wallCooldown = 0;
     this._wallFreeTime = 1;
@@ -709,6 +861,8 @@ export class Kart {
     this._pitchTarget = 0;
     this._pitch = 0;
     this._roll = 0;
+    this._rollKick = 0;        // transient body rock from wall hits and bumps
+    this.shove = this.shove ? this.shove.set(0, 0, 0) : new THREE.Vector3(); // world-space bump velocity
     this._steerVisual = 0;
     this._prevSpeed = 0;
     this._driftEmitAcc = this._boostEmitAcc = this._dustEmitAcc = 0;
@@ -723,7 +877,7 @@ export class Kart {
   dispose() {
     if (this.scene && typeof this.scene.remove === 'function') this.scene.remove(this.group);
     const m = this.model;
-    m.bodyMat.dispose(); m.accentMat.dispose(); m.suitMat.dispose(); m.plateMat.dispose();
+    m.bodyMat?.dispose(); if (m.accentMat !== m.bodyMat) m.accentMat?.dispose(); m.suitMat?.dispose(); m.plateMat?.dispose();
     m.plateTex?.dispose?.();
   }
 
@@ -735,6 +889,7 @@ export class Kart {
     s.boostPower = 0;
     s.hopTimer = 0;
     this._hopArmTimer = 0;
+    this._driftRearm = 0;
     this._spinDuration = duration;
     this._spinTurns = turns;
     this._spinSign = Math.random() < 0.5 ? -1 : 1;
@@ -744,6 +899,7 @@ export class Kart {
 
   _endDrift() {
     const s = this.state;
+    this._driftRearm = 0.6; // holding the drift key does not instantly re-hop
     s.drifting = false;
     s.driftDir = 0;
     s.driftCharge = 0;
@@ -770,6 +926,7 @@ export class Kart {
     s.invincibleTimer = Math.max(0, s.invincibleTimer - dt);
     s.shrinkTimer = Math.max(0, s.shrinkTimer - dt);
     this._hopArmTimer = Math.max(0, this._hopArmTimer - dt);
+    this._driftRearm = Math.max(0, this._driftRearm - dt);
     this._boostPadCooldown = Math.max(0, this._boostPadCooldown - dt);
     this._wallCooldown = Math.max(0, this._wallCooldown - dt);
 
@@ -829,7 +986,9 @@ export class Kart {
     this._driftHeldPrev = driftHeld;
 
     if (!s.drifting) {
-      if (driftPressed && s.hopTimer === 0 && speed > T.DRIFT_MIN_SPEED) {
+      // press to hop; or, with the key already held, steer hard to hop again (hold-to-drift)
+      const autoHop = driftHeld && !driftPressed && Math.abs(steer) > 0.5 && this._hopArmTimer === 0 && this._driftRearm === 0;
+      if ((driftPressed || autoHop) && s.hopTimer === 0 && speed > T.DRIFT_MIN_SPEED) {
         s.hopTimer = T.HOP_TIME;
         this._hopArmTimer = T.HOP_DRIFT_WINDOW;
         this.audio?.play?.('hop');
@@ -837,8 +996,10 @@ export class Kart {
       if (this._hopArmTimer > 0) {
         if (!driftHeld || speed < T.DRIFT_END_SPEED) {
           this._hopArmTimer = 0;
+    this._driftRearm = 0;
         } else if (Math.abs(steer) > 0.2) {
           this._hopArmTimer = 0;
+    this._driftRearm = 0;
           s.drifting = true;
           s.driftDir = steer > 0 ? 1 : -1;
           s.driftCharge = 0;
@@ -888,6 +1049,11 @@ export class Kart {
     const prevY = pos.y;
     pos.x += hx * speed * dt;
     pos.z += hz * speed * dt;
+    if (this.shove.lengthSq() > 1e-4) { // kart-kart bump shove, decaying
+      pos.x += this.shove.x * dt;
+      pos.z += this.shove.z * dt;
+      this.shove.multiplyScalar(Math.exp(-TUNING.BUMP_DRAG * dt));
+    }
 
     let info = null;
     if (track && typeof track.getRoadInfo === 'function') info = track.getRoadInfo(pos, this.trackT);
@@ -923,6 +1089,11 @@ export class Kart {
             this._wallCooldown = T.WALL_COOLDOWN;
             this.wallHit = true;
             this.audio?.play?.('wall');
+            this._rollKick = -side * 0.35;
+            if (this.particles?.emitPop) {
+              this._tmp.set(pos.x + right.x * side * 0.9, pos.y + 0.45, pos.z + right.z * side * 0.9);
+              this.particles.emitPop(this._tmp, 0xffd58a);
+            }
           } else {
             speed = moveToward(speed, 0, T.WALL_GRIND_DECEL * dt); // grind
           }
@@ -979,11 +1150,12 @@ export class Kart {
     // driver: steering wheel, lean into the turn, bob with speed
     M.steeringWheel.rotation.z = -this._steerVisual * 1.1;
     M.driver.rotation.z = this._steerVisual * 0.1;
-    M.driver.position.y = DRIVER_Y + Math.sin(this._time * (7 + 14 * ratio)) * 0.012 * (0.2 + ratio);
+    M.driver.position.y = (M.driverY ?? DRIVER_Y) + Math.sin(this._time * (7 + 14 * ratio)) * 0.012 * (0.2 + ratio);
 
     // body roll (outward in corners, lean into the slide when drifting) and pitch (slope + accel)
     const rollTarget = -this._steerVisual * ratio * 0.09 + (s.drifting ? s.driftDir * 0.15 : 0);
-    this._roll += (rollTarget - this._roll) * Math.min(1, 6 * dt);
+    this._rollKick *= Math.exp(-7 * dt);
+    this._roll += (rollTarget + this._rollKick - this._roll) * Math.min(1, 8 * dt);
     const accel = s.stunTimer > 0 ? 0 : (speed - this._prevSpeed) / dt;
     this._prevSpeed = speed;
     const accelPitch = clamp(-accel * 0.004, -0.06, 0.06);

@@ -1,0 +1,63 @@
+# Turbo Kart Grand Prix — cohesive low-poly asset set generated with Tripo (tripo-p1).
+# Run:  tripo batch run tripo-assets.yaml --concurrency 3 --retries 1
+# Shared style suffix keeps every asset in the same visual family; face budgets keep files light.
+concurrency: 3
+defaults:
+  out: ./tripo-out
+  params:
+    negative_prompt: "realistic, photorealistic, text, letters, logo, watermark, multiple objects, base, ground plane, background"
+jobs:
+  - name: kart_wheel
+    input: "a single stylized low poly racing kart wheel, black rubber tire with chunky tread, gold five-spoke rim with a hub cap, upright, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 1500 }
+  - name: driver
+    input: "a stylized low poly kart driver character in a seated driving pose, knees bent, both arms stretched forward holding a small black steering wheel, plain white racing suit, white round helmet with a dark tinted visor, white gloves, chibi proportions, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 4000 }
+  - name: tree_pine
+    input: "a stylized low poly pine tree, three stacked conical layers of bright green foliage, short brown trunk, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 900 }
+  - name: tree_round
+    input: "a stylized low poly deciduous tree with a big round bubbly canopy of bright green foliage, brown trunk, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 900 }
+  - name: tree_palm
+    input: "a stylized low poly palm tree with a gently curved brown trunk and a crown of wide green fronds, small coconuts, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 1200 }
+  - name: rock
+    input: "a stylized low poly boulder cluster of three grey rocks with a little green moss on top, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 500 }
+  - name: cloud
+    input: "a stylized low poly fluffy white cloud made of a few rounded lobes, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 400 }
+  - name: balloon
+    input: "a stylized low poly hot air balloon with a red, yellow and blue vertically striped envelope and a small brown wicker basket hanging below, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 1200 }
+  - name: tyre_stack
+    input: "a stylized low poly race track tire barrier, a stack of three tires painted alternating red and white, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 700 }
+  - name: rail
+    input: "a stylized low poly race track guard rail segment, one straight horizontal rail with red and white stripes on two short grey metal posts, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 500 }
+  - name: grandstand
+    input: "a stylized low poly race track grandstand, tiered seating rows filled with a colorful crowd of tiny spectators, red and white striped roof on white posts, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 5000 }
+  - name: finish_arch
+    input: "a stylized low poly race track finish line gantry, a wide flat overhead bridge on two red and white striped towers, black and white checkered pattern on the front banner, no words, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 2500 }
+  - name: item_mushroom
+    input: "a stylized low poly mushroom power-up, red rounded cap with white spots, short white stem, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 600 }
+  - name: item_banana
+    input: "a stylized low poly banana peel lying open, bright yellow with brown tips, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 600 }
+  - name: item_shell_green
+    input: "a stylized low poly green turtle shell with white spikes around the rim and a white underside, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 900 }
+  - name: item_shell_red
+    input: "a stylized low poly red turtle shell with white spikes around the rim and a white underside, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 900 }
+  - name: item_star
+    input: "a stylized low poly golden five-pointed star power-up, chunky and rounded, with two small black eyes, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 500 }
+  - name: item_bomb
+    input: "a stylized low poly round black bomb with a short grey fuse, two small white eyes and two little yellow feet, stylized cartoon low poly game asset, Mario Kart inspired, clean smooth surfaces, flat bright colors, single object centered"
+    params: { face_limit: 700 }

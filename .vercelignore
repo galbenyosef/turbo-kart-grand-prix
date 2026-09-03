@@ -1,10 +1,17 @@
-# Only the playable site is deployed; tooling and docs stay in the repo.
+# Only the playable site is deployed; tooling, docs and generation scratch stay out.
 node_modules
 tests
+tools
+dev
 server.js
 package.json
 README.md
 docs/ARCHITECTURE.md
 docs/demo.mp4
 docs/demo.gif
+tripo-assets.yaml
+tripo-assets.yaml.state.json
+tripo-out
+.tripo
+.claude
 .gitignore

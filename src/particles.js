@@ -296,6 +296,16 @@ export class ParticleSystem {
           rx * side * s + bx * b + rand(-0.5, 0.5), rand(0.8, 2.0), rz * side * s + bz * b + rand(-0.5, 0.5),
           c[0], c[1], c[2], 0.3, 0.75, rand(0.3, 0.45), 0.28, 0.3, 2.5, py - 0.05);
       }
+      // a couple of pale sparks so a fresh (uncharged) drift reads as a drift straight away
+      const w = this.pal.white;
+      for (let i = 0; i < 2; i++) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const s = rand(2, 4), b = rand(1.5, 3.5);
+        this.sparks.spawn(
+          px, py + 0.05, pz,
+          rx * side * s + bx * b + rand(-0.8, 0.8), rand(1, 2.5), rz * side * s + bz * b + rand(-0.8, 0.8),
+          w[0] * 0.85, w[1] * 0.85, w[2] * 0.9, rand(0.1, 0.16), 0, rand(0.2, 0.35), 0.9, 1, 0.5, py - 0.02);
+      }
       return;
     }
     const pal = this.pal.tier[Math.min(3, tier | 0)];

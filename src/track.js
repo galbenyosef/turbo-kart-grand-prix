@@ -1,6 +1,8 @@
 // Turbo Kart Grand Prix — track.js
 // Procedural circuit: closed Catmull-Rom centre-line, ribbon road with curbs, terrain,
-// barriers, boost pads and all trackside scenery. Everything is generated at runtime.
+// barriers, boost pads and all trackside scenery. Everything is generated at runtime; when an
+// optional GLB library (assets.js) is passed in, the scenery swaps its geometry source to the
+// Tripo models — per asset, with the procedural geometry as the fallback.
 //
 // Pure-math parts (design points, curve, lookup table, queryRoad) are exported so they can
 // be verified in node without a DOM: see tests/verify-track.mjs.
@@ -8,6 +10,21 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ROAD_WIDTH, WALL_MARGIN } from './constants.js';
+
+// ---------------------------------------------------------------------------
+// GLB scenery assets (optional; see ASSET_MANIFEST in assets.js)
+// ---------------------------------------------------------------------------
+// Orientation assumptions for the Tripo models: extra yaw (radians) on top of the placement yaw.
+// Flip any of them here after a visual check. With all zero the models are taken to be:
+//   rail         bar along local X (placed along the track tangent, mirrored per side)
+//   grandstand   long axis along local X, seating faces +Z (turned to face the track)
+//   finish_arch  span along local X, banner faces +Z — karts cross the line travelling +Z,
+//                so π turns the banner toward the approaching karts
+//   tyre_stack   rotationally symmetric; kept for completeness
+export const ASSET_YAW = { rail: 0, grandstand: Math.PI, finish_arch: Math.PI, tyre_stack: 0 };
+// Grandstands longer than the model: true → tile near-uniformly scaled copies along the stand,
+// false → one copy stretched along X to the planned length.
+export const GRANDSTAND_TILE = true;
 
 // ---------------------------------------------------------------------------
 // Small math / random helpers
@@ -687,6 +704,24 @@ export function createTerrainField(lut, opts) {
 
 const _Y = new THREE.Vector3(0, 1, 0);
 
+/** Union of a GLB group's geometry bounds — the model's own size, since assets are pre-normalised. */
+function assetBounds(group) {
+  const box = new THREE.Box3();
+  group.traverse((o) => {
+    if (!o.isMesh) return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    box.union(o.geometry.boundingBox);
+  });
+  return box;
+}
+
+/** Uploads instance data: GLB instanced groups via finish(), procedural InstancedMeshes via needsUpdate. */
+function commitInstances(mesh) {
+  if (mesh.finish) { mesh.finish(); return; }
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+}
+
 function makePineGeometry() {
   return mergeParts([
     withColor(new THREE.CylinderGeometry(0.22, 0.38, 2.6, 6), 0x6b4423).translate(0, 1.3, 0),
@@ -917,9 +952,11 @@ function makeMountainRing(rand, cx, cz, baseY) {
 // ---------------------------------------------------------------------------
 
 export class Track {
-  constructor(scene, renderer = null) {
+  /** @param {object} [assets] optional GLB library (assets.js); each scenery kind uses it when `has(name)`. */
+  constructor(scene, renderer = null, assets = null) {
     this.scene = scene;
     this.renderer = renderer;
+    this.assets = assets;
     this.roadWidth = ROAD_WIDTH;
     this.wallDistance = ROAD_WIDTH / 2 + WALL_MARGIN;
     this.startLineT = 0;
@@ -969,6 +1006,9 @@ export class Track {
   }
 
   // ----- layout helpers -------------------------------------------------------
+
+  /** True when the optional GLB library holds `name` (the procedural builder is used otherwise). */
+  _hasAsset(name) { return !!(this.assets && this.assets.has(name)); }
 
   _bounds() {
     const P = this.lut.positions;
@@ -1231,18 +1271,26 @@ export class Track {
     const lut = this.lut;
     const spacing = 4.0;
     const perSide = Math.floor(this.length / spacing);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), pv = new THREE.Vector3(), sv = new THREE.Vector3(1, 1, 1);
 
     // Rail segment: two horizontal rails on a centre post (4.4 m long to overlap on bends).
-    const railGeo = mergeParts([
-      withColor(new THREE.BoxGeometry(0.14, 0.34, 4.45), 0xffffff).translate(0, 0.78, 0),
-      withColor(new THREE.BoxGeometry(0.14, 0.26, 4.45), 0xffffff).translate(0, 0.36, 0),
-      withColor(new THREE.BoxGeometry(0.22, 1.05, 0.22), 0x9a9a9a).translate(0, 0.52, 0),
-    ]);
-    const railMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.15 });
-    const rails = new THREE.InstancedMesh(railGeo, railMat, perSide * 2);
-    rails.castShadow = true;
-    rails.receiveShadow = true;
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), pv = new THREE.Vector3(), sv = new THREE.Vector3(1, 1, 1);
+    // The GLB rail's bar runs along local X, so it is yawed ±90° (front toward the road on
+    // both sides) and stretched along the bar to the same overlap length.
+    const railAsset = this._hasAsset('rail');
+    let rails;
+    if (railAsset) {
+      rails = this.assets.instanced('rail', perSide * 2);
+      sv.set(4.45 / (assetBounds(rails).getSize(new THREE.Vector3()).x || 4), 1, 1);
+    } else {
+      const railGeo = mergeParts([
+        withColor(new THREE.BoxGeometry(0.14, 0.34, 4.45), 0xffffff).translate(0, 0.78, 0),
+        withColor(new THREE.BoxGeometry(0.14, 0.26, 4.45), 0xffffff).translate(0, 0.36, 0),
+        withColor(new THREE.BoxGeometry(0.22, 1.05, 0.22), 0x9a9a9a).translate(0, 0.52, 0),
+      ]);
+      rails = new THREE.InstancedMesh(railGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.15 }), perSide * 2);
+      rails.castShadow = true;
+      rails.receiveShadow = true;
+    }
     const red = new THREE.Color(0xe53935), white = new THREE.Color(0xf5f5f5);
     let idx = 0;
     for (let side = -1; side <= 1; side += 2) {
@@ -1250,27 +1298,18 @@ export class Track {
         const s = lookupAt(lut, (k * spacing) / this.length, {});
         const yaw = Math.atan2(s.tx, s.tz);
         pv.set(s.x + s.rx * side * (this.wallDistance + 0.3), s.y - 0.05, s.z + s.rz * side * (this.wallDistance + 0.3));
-        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+        q.setFromAxisAngle(_Y, railAsset ? yaw + side * Math.PI / 2 + ASSET_YAW.rail : yaw);
         m.compose(pv, q, sv);
         rails.setMatrixAt(idx, m);
-        rails.setColorAt(idx, k % 2 ? white : red);
+        if (!railAsset) rails.setColorAt(idx, k % 2 ? white : red);
         idx++;
       }
     }
-    rails.instanceMatrix.needsUpdate = true;
-    if (rails.instanceColor) rails.instanceColor.needsUpdate = true;
+    commitInstances(rails);
     rails.name = 'rails';
     this.group.add(rails);
 
     // Tyre stacks behind the rails on the outside of the tight corners.
-    const tyreProfile = [];
-    for (let i = 0; i <= 12; i++) {
-      const y = (i / 12) * 1.15;
-      const bulge = 0.05 * Math.sin((i / 12) * Math.PI * 3);
-      tyreProfile.push(new THREE.Vector2(0.58 + bulge, y));
-    }
-    const tyreGeo = new THREE.LatheGeometry(tyreProfile, 10);
-    const tyreMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.95 });
     const tyreSpots = [];
     const corners = [
       { t0: 0.14, t1: 0.235, side: -1 },   // sweeper outside (right-hander → left side)
@@ -1288,20 +1327,34 @@ export class Track {
         tyreSpots.push({ x: s.x + s.rx * cr.side * (this.wallDistance + 1.15), y: s.y - 0.08, z: s.z + s.rz * cr.side * (this.wallDistance + 1.15), yaw: Math.atan2(s.tx, s.tz) });
       }
     }
-    const tyres = new THREE.InstancedMesh(tyreGeo, tyreMat, tyreSpots.length);
-    tyres.castShadow = true;
-    tyres.receiveShadow = true;
+    const tyreAsset = this._hasAsset('tyre_stack');
+    let tyres;
+    if (tyreAsset) {
+      tyres = this.assets.instanced('tyre_stack', tyreSpots.length, { receiveShadow: true });
+    } else {
+      const tyreProfile = [];
+      for (let i = 0; i <= 12; i++) {
+        const y = (i / 12) * 1.15;
+        const bulge = 0.05 * Math.sin((i / 12) * Math.PI * 3);
+        tyreProfile.push(new THREE.Vector2(0.58 + bulge, y));
+      }
+      tyres = new THREE.InstancedMesh(new THREE.LatheGeometry(tyreProfile, 10), new THREE.MeshStandardMaterial({ color: 0x2a2a2e, roughness: 0.95 }), tyreSpots.length);
+      tyres.castShadow = true;
+      tyres.receiveShadow = true;
+    }
     const rand = mulberry32(5);
+    sv.set(1, 1, 1);
     tyreSpots.forEach((sp, i) => {
       pv.set(sp.x, sp.y, sp.z);
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * Math.PI);
+      q.setFromAxisAngle(_Y, rand() * Math.PI + (tyreAsset ? ASSET_YAW.tyre_stack : 0));
       m.compose(pv, q, sv);
       tyres.setMatrixAt(i, m);
-      const shade = 0.75 + rand() * 0.35;
-      tyres.setColorAt(i, new THREE.Color(shade, shade, shade));
+      if (!tyreAsset) {
+        const shade = 0.75 + rand() * 0.35;
+        tyres.setColorAt(i, new THREE.Color(shade, shade, shade));
+      }
     });
-    tyres.instanceMatrix.needsUpdate = true;
-    if (tyres.instanceColor) tyres.instanceColor.needsUpdate = true;
+    commitInstances(tyres);
     tyres.name = 'tyres';
     this.group.add(tyres);
   }
@@ -1362,10 +1415,10 @@ export class Track {
     this._animated.push((dt) => { tex.offset.x += dt * 0.015; tex.offset.y += dt * 0.01; });
   }
 
-  /** Start/finish gantry (FINISH banner) and a sponsor arch on the crest. */
+  /** Start/finish gantry (FINISH banner; the GLB arch when available) and a sponsor arch on the crest. */
   _buildGantries() {
     const defs = [
-      { t: 0, text: 'FINISH', bg: '#d32f2f', accent: 0xd32f2f, span: 32, height: 10, fontSize: 130 },
+      { t: 0, text: 'FINISH', bg: '#d32f2f', accent: 0xd32f2f, span: 32, height: 10, fontSize: 130, asset: 'finish_arch' },
       { t: 0.548, text: 'TURBO KART GP', bg: '#1e63c9', accent: 0x1e63c9, span: 32, height: 9.5, fontSize: 96 },
     ];
     for (const d of defs) {
@@ -1376,14 +1429,28 @@ export class Track {
         new THREE.Quaternion().setFromAxisAngle(_Y, yaw),
         new THREE.Vector3(1, 1, 1),
       );
-      for (const p of makeGantryParts(d.span, d.height, d.accent)) this._structureParts.push(p.applyMatrix4(m));
       // Two-sided banner: one plane facing the approaching karts (-Z local), one facing back.
       const w = d.span - 8, h = 3.2;
       const front = new THREE.PlaneGeometry(w, h);
       front.rotateY(Math.PI);
       const back = new THREE.PlaneGeometry(w, h);
       const bg = mergeGeometries([front, back], false);
-      bg.translate(0, d.height - 1.4 - h / 2 - 0.2, 0);
+      const arch = d.asset && this._hasAsset(d.asset) ? this.assets.clone(d.asset, { receiveShadow: true }) : null;
+      if (arch) {
+        // GLB arch scaled uniformly so its span covers road + walls like the procedural gantry;
+        // the banner hangs across its top, just ahead of it on the approach side.
+        const size = assetBounds(arch).getSize(new THREE.Vector3());
+        const k = d.span / size.x;
+        arch.position.set(s.position.x, s.position.y - 0.05, s.position.z);
+        arch.rotation.y = yaw + ASSET_YAW[d.asset];
+        arch.scale.setScalar(k);
+        arch.name = d.asset;
+        this.group.add(arch);
+        bg.translate(0, size.y * k * 0.72, -(size.z * k * 0.5 + 0.15));
+      } else {
+        for (const p of makeGantryParts(d.span, d.height, d.accent)) this._structureParts.push(p.applyMatrix4(m));
+        bg.translate(0, d.height - 1.4 - h / 2 - 0.2, 0);
+      }
       bg.applyMatrix4(m);
       const tex = makeBannerTexture(d.text, this.renderer, { bg: d.bg, fontSize: d.fontSize });
       const banner = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({
@@ -1478,8 +1545,35 @@ export class Track {
     });
   }
 
-  /** Two grandstands beside the straight, packed with instanced bobbing spectators. */
+  /** Two grandstands beside the straight: GLB copies (crowd baked in) or procedural stands packed with instanced bobbing spectators. */
   _buildGrandstands() {
+    if (this._hasAsset('grandstand')) {
+      const stands = new THREE.Group();
+      stands.name = 'grandstands';
+      const size = new THREE.Vector3();
+      for (const st of this._stands) {
+        // Planned frame: origin on the track-side edge, X along the stand, +Z away from the track.
+        // The model is centred on its footprint with the seating facing +Z, so it is turned round
+        // and pushed back by half its depth; stands longer than the model are tiled (or stretched) along X.
+        const alongX = Math.cos(st.ry), alongZ = -Math.sin(st.ry);
+        const awayX = Math.sin(st.ry), awayZ = Math.cos(st.ry);
+        const first = this.assets.clone('grandstand', { receiveShadow: true });
+        assetBounds(first).getSize(size);
+        const n = GRANDSTAND_TILE ? Math.max(1, Math.round(st.length / size.x)) : 1;
+        const sx = st.length / (n * size.x);
+        const cx = st.x + awayX * size.z * 0.5, cz = st.z + awayZ * size.z * 0.5;
+        for (let i = 0; i < n; i++) {
+          const g = i ? this.assets.clone('grandstand', { receiveShadow: true }) : first;
+          const along = (i - (n - 1) / 2) * size.x * sx;
+          g.position.set(cx + alongX * along, -0.05, cz + alongZ * along);
+          g.rotation.y = st.ry + Math.PI + ASSET_YAW.grandstand;
+          g.scale.set(sx, 1, 1);
+          stands.add(g);
+        }
+      }
+      this.group.add(stands);
+      return;
+    }
     const rand = mulberry32(88);
     const geos = [];
     const spots = [];
@@ -1555,10 +1649,9 @@ export class Track {
     this._structureParts = null;
   }
 
-  /** ~300 trees of three varieties (pine, deciduous, palm) as three InstancedMeshes. */
+  /** ~300 trees of three varieties (pine, deciduous, palm) as three instanced sets (GLB or procedural). */
   _buildTrees() {
     const rand = mulberry32(2718);
-    const geos = [makePineGeometry(), makeDeciduousGeometry(), makePalmGeometry()];
     const placements = [[], [], []];
     const tb = this.terrainBounds;
     const minRoad = this.wallDistance + 6.5;
@@ -1607,30 +1700,35 @@ export class Track {
       if (this.field.roadDistance(x, z) < minRoad) continue;
       add(x, z, 2);
     }
-    const mats = [
-      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }),
-      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }),
-      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }),
-    ];
+    const builders = [makePineGeometry, makeDeciduousGeometry, makePalmGeometry];
+    const assetNames = ['tree_pine', 'tree_round', 'tree_palm'];
     const names = ['pines', 'trees', 'palms'];
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), col = new THREE.Color();
     for (let k = 0; k < 3; k++) {
       const list = placements[k];
       if (!list.length) continue;
-      const mesh = new THREE.InstancedMesh(geos[k], mats[k], list.length);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      const useAsset = this._hasAsset(assetNames[k]);
+      let mesh;
+      if (useAsset) {
+        mesh = this.assets.instanced(assetNames[k], list.length);
+      } else {
+        mesh = new THREE.InstancedMesh(builders[k](), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: k === 2 ? THREE.DoubleSide : THREE.FrontSide }), list.length);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+      }
       list.forEach((tr, i) => {
         p.set(tr.x, tr.y, tr.z);
         q.setFromAxisAngle(_Y, tr.yaw);
         sc.set(tr.s, tr.s * (0.9 + rand() * 0.25), tr.s);
+        const g = 0.95 + rand() * 0.1;   // drawn on both paths so the layouts stay identical
         m.compose(p, q, sc);
         mesh.setMatrixAt(i, m);
-        col.setRGB(tr.tint, tr.tint * (0.95 + rand() * 0.1), tr.tint * 0.95);
-        mesh.setColorAt(i, col);
+        if (!useAsset) {
+          col.setRGB(tr.tint, tr.tint * g, tr.tint * 0.95);
+          mesh.setColorAt(i, col);
+        }
       });
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      commitInstances(mesh);
       mesh.name = names[k];
       this.group.add(mesh);
     }
@@ -1647,7 +1745,7 @@ export class Track {
       for (const k of this._keepOut) if (Math.hypot(x - k.x, z - k.z) < k.r) return;
       const e = Math.max(Math.abs(x - tb.cx) / tb.hw, Math.abs(z - tb.cz) / tb.hh);
       if (e > 0.8) return;
-      spots.push({ x, z, y: this.field.height(x, z) - s * 0.35, s, yaw: rand() * Math.PI * 2, shade: 0.7 + rand() * 0.4, sz: 0.8 + rand() * 0.4 });
+      spots.push({ x, z, y: this.field.height(x, z), s, yaw: rand() * Math.PI * 2, shade: 0.7 + rand() * 0.4, sz: 0.8 + rand() * 0.4 });
     };
     for (let c = 0; c < 14; c++) {
       const cx = tb.cx + (rand() * 2 - 1) * tb.hw * 0.75, cz = tb.cz + (rand() * 2 - 1) * tb.hh * 0.75;
@@ -1656,25 +1754,35 @@ export class Track {
     }
     for (let i = 0; i < 24; i++) tryAdd(tb.cx + (rand() * 2 - 1) * tb.hw * 0.78, tb.cz + (rand() * 2 - 1) * tb.hh * 0.78, 0.5 + rand() * 1.4);
     if (!spots.length) return;
-    const mesh = new THREE.InstancedMesh(
-      makeRockGeometry(),
-      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true }),
-      spots.length,
-    );
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    const useAsset = this._hasAsset('rock');
+    let mesh, sink;
+    if (useAsset) {
+      mesh = this.assets.instanced('rock', spots.length);
+      sink = assetBounds(mesh).getSize(new THREE.Vector3()).y * 0.3;   // grounded model: bury 30 % of its height
+    } else {
+      mesh = new THREE.InstancedMesh(makeRockGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true }), spots.length);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+    }
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), col = new THREE.Color();
     spots.forEach((r, i) => {
-      p.set(r.x, r.y, r.z);
+      if (useAsset) {
+        const k = r.s / 1.2;   // the 2.4 m model gets the same ~2·s footprint as the unit-radius procedural rock
+        p.set(r.x, r.y - sink * k, r.z);
+        sc.set(k, k, k * r.sz);
+      } else {
+        p.set(r.x, r.y - r.s * 0.35, r.z);   // centred geometry, partially buried
+        sc.set(r.s, r.s * 0.8, r.s * r.sz);
+      }
       q.setFromAxisAngle(_Y, r.yaw);
-      sc.set(r.s, r.s * 0.8, r.s * r.sz);
       m.compose(p, q, sc);
       mesh.setMatrixAt(i, m);
-      col.setRGB(0.55 * r.shade, 0.52 * r.shade, 0.48 * r.shade);
-      mesh.setColorAt(i, col);
+      if (!useAsset) {
+        col.setRGB(0.55 * r.shade, 0.52 * r.shade, 0.48 * r.shade);
+        mesh.setColorAt(i, col);
+      }
     });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    commitInstances(mesh);
     mesh.name = 'rocks';
     this.group.add(mesh);
   }
@@ -1689,48 +1797,57 @@ export class Track {
     this.group.add(mesh);
   }
 
-  /** Floating hot-air balloons: tinted gores + plain parts as two InstancedMeshes sharing transforms. */
+  /** Floating hot-air balloons: one GLB instanced group, or tinted gores + plain parts as two InstancedMeshes sharing transforms. */
   _buildBalloons() {
     const rand = mulberry32(555);
-    const { tinted, plain } = makeBalloonGeometries();
     const count = 14;
-    const tintedMesh = new THREE.InstancedMesh(tinted, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), count);
-    const plainMesh = new THREE.InstancedMesh(plain, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), count);
-    tintedMesh.frustumCulled = false;
-    plainMesh.frustumCulled = false;
-    tintedMesh.name = 'balloonsTinted';
-    plainMesh.name = 'balloonsPlain';
-    const palette = [0xe53935, 0x1e88e5, 0x43a047, 0xfdd835, 0x8e24aa, 0xfb8c00, 0x00acc1, 0xf06292];
     const tb = this.terrainBounds;
     const data = [];
-    const color = new THREE.Color();
     for (let i = 0; i < count; i++) {
       const a = rand() * Math.PI * 2, d = 40 + rand() * 300;
       data.push({
         x: tb.cx + Math.cos(a) * d, z: tb.cz + Math.sin(a) * d, y: 38 + rand() * 50,
         s: 4.5 + rand() * 2.5, phase: rand() * Math.PI * 2, yaw: rand() * Math.PI * 2, spin: (rand() - 0.5) * 0.1,
       });
-      color.set(palette[i % palette.length]);
-      tintedMesh.setColorAt(i, color);
     }
-    if (tintedMesh.instanceColor) tintedMesh.instanceColor.needsUpdate = true;
+    // `parts`: the InstancedMeshes that share the balloon transforms.
+    const useAsset = this._hasAsset('balloon');
+    let parts;
+    if (useAsset) {
+      const group = this.assets.instanced('balloon', count);
+      group.name = 'balloons';
+      parts = group.parts;
+      this.group.add(group);
+    } else {
+      const { tinted, plain } = makeBalloonGeometries();
+      const tintedMesh = new THREE.InstancedMesh(tinted, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), count);
+      const plainMesh = new THREE.InstancedMesh(plain, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), count);
+      tintedMesh.name = 'balloonsTinted';
+      plainMesh.name = 'balloonsPlain';
+      const palette = [0xe53935, 0x1e88e5, 0x43a047, 0xfdd835, 0x8e24aa, 0xfb8c00, 0x00acc1, 0xf06292];
+      const color = new THREE.Color();
+      for (let i = 0; i < count; i++) tintedMesh.setColorAt(i, color.set(palette[i % palette.length]));
+      if (tintedMesh.instanceColor) tintedMesh.instanceColor.needsUpdate = true;
+      parts = [tintedMesh, plainMesh];
+      this.group.add(tintedMesh);
+      this.group.add(plainMesh);
+    }
+    // The procedural balloon is ~3.9 units tall per scale unit; the (vertically centred) model is 13 m.
+    const unit = useAsset ? 0.3 : 1;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3();
     const tick = (elapsed) => {
       for (let i = 0; i < count; i++) {
         const b = data[i];
         p.set(b.x + Math.sin(elapsed * 0.11 + b.phase) * 3, b.y + Math.sin(elapsed * 0.37 + b.phase) * 1.8, b.z);
         q.setFromAxisAngle(_Y, b.yaw + elapsed * b.spin);
-        sc.set(b.s, b.s, b.s);
+        sc.setScalar(b.s * unit);
         m.compose(p, q, sc);
-        tintedMesh.setMatrixAt(i, m);
-        plainMesh.setMatrixAt(i, m);
+        for (let j = 0; j < parts.length; j++) parts[j].setMatrixAt(i, m);
       }
-      tintedMesh.instanceMatrix.needsUpdate = true;
-      plainMesh.instanceMatrix.needsUpdate = true;
+      for (let j = 0; j < parts.length; j++) parts[j].instanceMatrix.needsUpdate = true;
     };
     tick(0);
-    this.group.add(tintedMesh);
-    this.group.add(plainMesh);
+    for (const part of parts) part.frustumCulled = false;   // they move
     this._animated.push((dt, elapsed) => tick(elapsed));
   }
 

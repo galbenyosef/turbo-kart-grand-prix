@@ -21,6 +21,13 @@ import { ROAD_WIDTH, WALL_MARGIN, ITEM_TYPES } from './constants.js';
 const BOX_SIZE = 1.3;
 const BOX_BOB = 0.15;
 const PICKUP_RADIUS = 1.6;
+const HELD_ITEM_ASSET = {
+  mushroom: 'item_mushroom', triple_mushroom: 'item_mushroom', banana: 'item_banana',
+  green_shell: 'item_shell_green', red_shell: 'item_shell_red', star: 'item_star', bomb: 'item_bomb',
+};
+const HELD_ITEM_SCALE = 0.55;
+const HELD_ITEM_Y = 1.45;   // above the rear of the kart (kart.body space)
+const HELD_ITEM_Z = -0.55;
 const BOX_RESPAWN_TIME = 3;
 const BOX_SHRINK_TIME = 0.15;
 const BOX_GROW_TIME = 0.45;
@@ -82,7 +89,8 @@ class Projectile {
 }
 
 export class ItemManager {
-  constructor(scene, track, particles, audio) {
+  constructor(scene, track, particles, audio, assets = null) {
+    this.assets = assets ?? null;
     this.scene = scene;
     this.track = track;
     this.particles = particles;
@@ -220,6 +228,13 @@ export class ItemManager {
   }
 
   _makeShell(red) {
+    // Tripo shell asset (normalised to 0.9 m, vertically centred at the projectile height)
+    const shellAsset = red ? 'item_shell_red' : 'item_shell_green';
+    if (this.assets?.has?.(shellAsset)) {
+      const grp = new THREE.Group();
+      grp.add(this.assets.clone(shellAsset));
+      return grp;
+    }
     const grp = new THREE.Group();
     const dome = new THREE.Mesh(this.geo.shellDome, red ? this.mat.redShell : this.mat.greenShell);
     dome.position.y = 0.08;
@@ -243,6 +258,11 @@ export class ItemManager {
   }
 
   _makeBanana() {
+    if (this.assets?.has?.('item_banana')) {
+      const grp = new THREE.Group();
+      grp.add(this.assets.clone('item_banana'));
+      return grp;
+    }
     const grp = new THREE.Group();
     const body = new THREE.Mesh(this.geo.bananaBody, this.mat.banana);
     body.castShadow = true;
@@ -260,6 +280,18 @@ export class ItemManager {
   }
 
   _makeBomb() {
+    if (this.assets?.has?.('item_bomb')) {
+      // bomb asset is 0.85 m tall and centred: lift it so it stands on the road; keep the animated fuse spark
+      const grp = new THREE.Group();
+      const m = this.assets.clone('item_bomb');
+      m.position.y = 0.425;
+      grp.add(m);
+      const sparkMat = this.mat.spark.clone();
+      const spark = new THREE.Mesh(this.geo.spark, sparkMat);
+      spark.position.set(-0.05, 0.98, 0);
+      grp.add(spark);
+      return { grp, sparkMat, spark };
+    }
     const grp = new THREE.Group();
     const body = new THREE.Mesh(this.geo.bombBody, this.mat.bomb);
     body.position.y = 0.45;
@@ -290,6 +322,33 @@ export class ItemManager {
     for (const part of [body, fuse, spark, eyeL, eyeR, pupilL, pupilR, footL, footR, keyStem, keyRing]) grp.add(part);
     footL.castShadow = footR.castShadow = true;
     return { grp, sparkMat, spark };
+  }
+
+  // ------------------------------------------------------------------ held-item display
+
+  /** Shows the item a kart is carrying as a small spinning model above its rear (Tripo assets only). */
+  _updateHeldItems(dt, karts) {
+    if (!this.assets) return;
+    for (const kart of karts) {
+      const shown = kart._heldItemName ?? null;
+      const want = kart.item && !(kart.rouletteTimer > 0) ? (HELD_ITEM_ASSET[kart.item] ?? null) : null;
+      if (want !== shown) {
+        if (kart._heldItemMesh) { kart._heldItemMesh.parent?.remove(kart._heldItemMesh); kart._heldItemMesh = null; }
+        kart._heldItemName = want;
+        if (want && this.assets.has(want) && kart.body) {
+          const m = this.assets.clone(want, { castShadow: false });
+          m.scale.setScalar(HELD_ITEM_SCALE);
+          m.position.set(0, HELD_ITEM_Y, HELD_ITEM_Z);
+          kart.body.add(m);
+          kart._heldItemMesh = m;
+        }
+      }
+      const m = kart._heldItemMesh;
+      if (m) {
+        m.rotation.y += dt * 2.2;
+        m.position.y = HELD_ITEM_Y + Math.sin(this.time * 3 + kart.index) * 0.06;
+      }
+    }
   }
 
   // ------------------------------------------------------------------ helpers
@@ -498,6 +557,8 @@ export class ItemManager {
   // ------------------------------------------------------------------ update
 
   update(dt, karts = []) {
+    this.time = (this.time || 0) + dt;
+    this._updateHeldItems(dt, karts);
     if (!(dt > 0)) return;
     if (dt > 0.1) dt = 0.1;
     this.elapsed += dt;

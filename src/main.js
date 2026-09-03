@@ -25,6 +25,7 @@ import { ItemManager } from './items.js';
 import { ParticleSystem } from './particles.js';
 import { AudioManager } from './audio.js';
 import { HUD } from './hud.js';
+import { AssetLibrary } from './assets.js';
 
 const FIXED = 1 / 120;
 const MAX_SUBSTEPS = 6;
@@ -54,7 +55,7 @@ const G = {
   errorCount: 0,
 
   renderer: null, scene: null, camera: null,
-  environment: null, track: null, particles: null, audio: null, items: null, hud: null, input: null,
+  assets: null, environment: null, track: null, particles: null, audio: null, items: null, hud: null, input: null,
   karts: [], ais: [], controllers: [], player: null, playerAI: null,
 
   elapsed: 0, lastTime: 0, lastRaf: 0, accumulator: 0,
@@ -67,7 +68,7 @@ const G = {
   lastRoulette: null,
   prevKeys: { pause: false, restart: false, confirm: false, useItem: false },
 
-  cam: { fov: 60, lookBack: false, snap: true, menuT: 0, shakeSeed: 0 },
+  cam: { fov: 60, lookBack: false, snap: true, menuT: 0, shake: 0, lookYaw: 0, lookPitch: 0, lookTargetYaw: 0, lookTargetPitch: 0 },
   minimapKarts: [],
   frameTimes: new Float32Array(30), frameIdx: 0, frameCount: 0, fps: 0,
 };
@@ -113,6 +114,9 @@ async function boot() {
   });
 
   window.addEventListener('resize', onResize);
+  window.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseleave', resetLook);
+  window.addEventListener('blur', resetLook);
   exposeTestHook();
   G.lastTime = performance.now();
   G.lastRaf = G.lastTime;
@@ -138,31 +142,36 @@ async function buildWorld() {
   G.camera.position.set(0, 30, 60);
   G.scene.add(G.camera);
 
-  hud.setLoading(0.12, 'Painting the sky…');
-  await nextFrames(2);
-  G.environment = new Environment(G.scene, renderer);
+  hud.setLoading(0.08, 'Loading 3D assets…');
+  G.assets = new AssetLibrary();
+  await G.assets.loadAll((done, total) => hud.setLoading(0.08 + 0.3 * (done / total), `Loading 3D assets… ${done}/${total}`));
+  console.info(`[assets] ${G.assets.loadedCount} models loaded`, G.assets.errors.size ? [...G.assets.errors.keys()] : '');
 
-  hud.setLoading(0.3, 'Building track…');
+  hud.setLoading(0.4, 'Painting the sky…');
   await nextFrames(2);
-  G.track = new Track(G.scene, renderer);
+  G.environment = new Environment(G.scene, renderer, G.assets);
 
-  hud.setLoading(0.62, 'Fuelling karts…');
+  hud.setLoading(0.46, 'Building track…');
+  await nextFrames(2);
+  G.track = new Track(G.scene, renderer, G.assets);
+
+  hud.setLoading(0.7, 'Fuelling karts…');
   await nextFrames(2);
   G.particles = new ParticleSystem(G.scene);
   if (typeof G.particles.setViewport === 'function') G.particles.setViewport(Math.max(1, window.innerHeight), 60, renderer.getPixelRatio());
   G.audio = new AudioManager();
-  G.items = new ItemManager(G.scene, G.track, G.particles, G.audio);
+  G.items = new ItemManager(G.scene, G.track, G.particles, G.audio, G.assets);
 
   G.karts = [];
   for (let i = 0; i < NUM_RACERS; i++) {
-    const kart = new Kart(G.scene, { color: KART_COLORS[i], name: KART_NAMES[i], isPlayer: i === 0, index: i });
+    const kart = new Kart(G.scene, { color: KART_COLORS[i], name: KART_NAMES[i], isPlayer: i === 0, index: i, assets: G.assets });
     if (typeof kart.setEffects === 'function') kart.setEffects(G.particles, i === 0 ? G.audio : null);
     G.karts.push(kart);
   }
   G.player = G.karts[0];
   G.minimapKarts = G.karts.map((k) => ({ x: 0, z: 0, color: k.color, isPlayer: !!k.isPlayer }));
 
-  hud.setLoading(0.85, 'Waking up the rivals…');
+  hud.setLoading(0.9, 'Waking up the rivals…');
   await nextFrames(1);
   G.input = new Input();
   G.ais = G.karts.slice(1).map((k, i) => new AIController(k, G.track, { skill: 0.45 + i * 0.065 }));
@@ -438,12 +447,17 @@ function resolveCollisions() {
       // Faster kart loses 15%, slower gains 10% of the faster's speed.
       const sa = a.speed || 0, sb = b.speed || 0;
       if (Math.abs(sa) >= Math.abs(sb)) {
-        a.speed = sa * 0.85;
+        a.speed = sa * 0.8;
         b.speed = sb + 0.10 * Math.abs(sa) * Math.sign(sa || 1);
       } else {
-        b.speed = sb * 0.85;
+        b.speed = sb * 0.8;
         a.speed = sa + 0.10 * Math.abs(sb) * Math.sign(sb || 1);
       }
+      // Bump feedback: shove apart, rock the bodies, sparks + thud; the player's camera shakes.
+      const strength = 4 + 0.15 * Math.abs(sa - sb);
+      if (typeof a.bump === 'function') a.bump(-nx, -nz, strength);
+      if (typeof b.bump === 'function') b.bump(nx, nz, strength);
+      if (a.isPlayer || b.isPlayer) G.cam.shake = Math.max(G.cam.shake, 0.15 + 0.004 * Math.abs(sa - sb));
 
       const aStar = a.state && a.state.invincibleTimer > 0;
       const bStar = b.state && b.state.invincibleTimer > 0;
@@ -573,10 +587,12 @@ function chaseTarget(outPos, outLook) {
       _fwd.lerp(_vdir, 0.35).normalize();
     }
   }
+  // mouse look: orbit the camera (and its view direction) around the kart
+  if (Math.abs(G.cam.lookYaw) > 1e-3) _fwd.applyAxisAngle(_up, G.cam.lookYaw).normalize();
   _right.crossVectors(_fwd, _up).normalize();
   const ratio = speedRatioOf(p);
   const dist = 7.5;
-  const height = 3.2;
+  const height = clamp(3.2 + G.cam.lookPitch * 3, 1.5, 7);
   outPos.copy(p.position)
     .addScaledVector(_fwd, -dist + 0.5 * ratio)
     .addScaledVector(_up, height);
@@ -654,6 +670,8 @@ function updateCamera(dt) {
     return;
   }
 
+  C.lookYaw += (C.lookTargetYaw - C.lookYaw) * (1 - Math.exp(-dt * 6));
+  C.lookPitch += (C.lookTargetPitch - C.lookPitch) * (1 - Math.exp(-dt * 6));
   chaseTarget(_desired, _look);
   if (C.snap) {
     cam.position.copy(_desired);
@@ -664,11 +682,13 @@ function updateCamera(dt) {
     _lookSmooth.lerp(_look, 1 - Math.exp(-dt * 10));
   }
   const boosting = st.boostTimer > 0;
-  if (boosting) {
-    cam.position.x += (Math.random() - 0.5) * 0.1;
-    cam.position.y += (Math.random() - 0.5) * 0.1;
-    cam.position.z += (Math.random() - 0.5) * 0.1;
+  const shake = (boosting ? 0.05 : 0) + C.shake; // boost rumble + impact shake (wall hits, bumps)
+  if (shake > 0.001) {
+    cam.position.x += (Math.random() - 0.5) * 2 * shake;
+    cam.position.y += (Math.random() - 0.5) * 2 * shake;
+    cam.position.z += (Math.random() - 0.5) * 2 * shake;
   }
+  C.shake *= Math.exp(-dt * 7);
   keepCameraAboveRoad();
   cam.lookAt(_lookSmooth);
   setFov(dt, 60 + (boosting ? 18 : 0) + 6 * speedRatioOf(p));
@@ -724,7 +744,7 @@ function updateAudio() {
   if (active) {
     audio.setEngine(speedRatioOf(p), st.boostTimer > 0, !!st.drifting);
     audio.setStarMusic(st.invincibleTimer > 0);
-    if (p.wallHit) { audio.play('wall'); p.wallHit = false; }
+    if (p.wallHit) { G.cam.shake = Math.max(G.cam.shake, 0.22); p.wallHit = false; } // kart.js plays the thud
     const r = p.rouletteItem || null;
     if (r !== G.lastRoulette) {
       if (r) audio.play('item_roulette');
@@ -849,6 +869,25 @@ function reportError(err) {
   }
 }
 
+// Mouse look: the cursor's offset from the screen centre swings the chase camera around the kart
+// (screen edges look almost straight back, top/bottom lower/raise the camera); a dead zone keeps
+// the default view rock-steady. Resets when the cursor leaves the window.
+const LOOK_MAX_YAW = 2.4;
+const LOOK_DEADZONE = 0.12;
+function deadzone(v) {
+  const a = Math.abs(v);
+  return a < LOOK_DEADZONE ? 0 : Math.sign(v) * (a - LOOK_DEADZONE) / (1 - LOOK_DEADZONE);
+}
+function onMouseMove(e) {
+  const C = G.cam;
+  if (G.state !== 'racing' && G.state !== 'finished') { C.lookTargetYaw = 0; C.lookTargetPitch = 0; return; }
+  const nx = clamp((e.clientX / Math.max(1, window.innerWidth)) * 2 - 1, -1, 1);
+  const ny = clamp((e.clientY / Math.max(1, window.innerHeight)) * 2 - 1, -1, 1);
+  C.lookTargetYaw = -deadzone(nx) * LOOK_MAX_YAW;  // cursor right → camera orbits to the kart's left, looking right
+  C.lookTargetPitch = deadzone(ny);                // cursor low → camera rises
+}
+function resetLook() { G.cam.lookTargetYaw = 0; G.cam.lookTargetPitch = 0; }
+
 function onResize() {
   if (!G.renderer || !G.camera) return;
   // Guard against a 0×0 viewport (hidden pane / iframe): a 0 height would make the aspect NaN.
@@ -874,6 +913,7 @@ function exposeTestHook() {
     track: G.track,
     items: G.items,
     particles: G.particles,
+    assets: G.assets,
     scene: G.scene,
     camera: G.camera,
     renderer: G.renderer,

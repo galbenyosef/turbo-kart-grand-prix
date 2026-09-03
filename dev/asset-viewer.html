@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Asset viewer — Turbo Kart</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1b2436; color: #fff; font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+    canvas { display: block; }
+    #info { position: fixed; left: 10px; top: 10px; background: rgba(0,0,0,.55); padding: 8px 10px; border-radius: 6px; white-space: pre; max-height: 90vh; overflow: auto; }
+  </style>
+  <script type="importmap">
+  { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+  </script>
+</head>
+<body>
+<div id="info">loading…</div>
+<script type="module">
+  // Dev-only: lays every GLB from the manifest on a grid with axes (red = +X, blue = +Z) so scale,
+  // grounding and facing direction can be checked. ?only=a,b limits the set; ?tint=ff0000 tints
+  // tintable assets; ?focus=name frames one asset.
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import { AssetLibrary, ASSET_MANIFEST } from '../src/assets.js';
+  window.THREE = THREE;
+
+  const q = new URLSearchParams(location.search);
+  const only = q.get('only')?.split(',').filter(Boolean);
+  const tint = q.get('tint') ? parseInt(q.get('tint'), 16) : null;
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1b2436);
+  const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 2000);
+  camera.position.set(30, 25, 40);
+  const controls = new OrbitControls(camera, renderer.domElement);
+  scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x60503a, 0.9));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  sun.position.set(40, 60, 30);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -80, right: 80, top: 80, bottom: -80, near: 1, far: 300 });
+  scene.add(sun);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: 0x3b5a3a, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  scene.add(new THREE.GridHelper(400, 80, 0x557755, 0x335533));
+
+  const assets = new AssetLibrary('../assets/models/');
+  const names = only?.length ? only : Object.keys(ASSET_MANIFEST);
+  const info = document.getElementById('info');
+  await assets.loadAll((d, t, n) => { info.textContent = `loading ${d}/${t} ${n}`; }, names);
+
+  const report = [];
+  let x = 0, z = 0, rowMax = 0;
+  const placed = {};
+  for (const name of names) {
+    const cfg = ASSET_MANIFEST[name];
+    if (!cfg) { report.push(`${name.padEnd(17)} not in ASSET_MANIFEST`); continue; }
+    const cell = Math.max(4, cfg.size * 1.2);
+    if (x + cell > 90) { x = 0; z += rowMax + 4; rowMax = 0; }
+    const obj = assets.clone(name, { tint: tint ?? undefined }) || null;
+    if (obj) {
+      obj.position.set(x + cell / 2, cfg.ground ? 0 : cfg.size / 2, z + cell / 2);
+      scene.add(obj);
+      const axes = new THREE.AxesHelper(Math.max(1, cfg.size * 0.6));
+      axes.position.copy(obj.position); axes.position.y = 0.02; scene.add(axes);
+      const b = new THREE.Box3().setFromObject(obj); const s = new THREE.Vector3(); b.getSize(s);
+      report.push(`${name.padEnd(17)} ok  tris=${assets.triangles(name).toString().padStart(5)}  size=${s.x.toFixed(2)}×${s.y.toFixed(2)}×${s.z.toFixed(2)}  minY=${b.min.y.toFixed(2)}`);
+      placed[name] = obj;
+    } else {
+      report.push(`${name.padEnd(17)} MISSING ${assets.errors.get(name)?.message || ''}`);
+    }
+    x += cell; rowMax = Math.max(rowMax, cell);
+  }
+  info.textContent = report.join('\n');
+  const focus = q.get('focus');
+  if (focus && placed[focus]) {
+    const o = placed[focus]; const sz = ASSET_MANIFEST[focus].size;
+    controls.target.copy(o.position); controls.target.y += sz * 0.4;
+    camera.position.copy(o.position).add(new THREE.Vector3(sz * 1.6, sz * 1.1, sz * 2.0));
+  } else {
+    controls.target.set(45, 0, z / 2);
+    camera.position.set(45, 60, z / 2 + 90);
+  }
+  controls.update();
+
+  window.__viewer = { assets, report, placed, scene, camera, renderer, controls, render: () => renderer.render(scene, camera) };
+  const loop = () => { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); };
+  loop();
+  setInterval(() => renderer.render(scene, camera), 250); // keep painting when rAF is starved
+  addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script>
+</body>
+</html>
