@@ -1,0 +1,70 @@
+{
+  "jobs": {
+    "grandstand_empty": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "e0d41dc8-978a-452e-b20a-86b5e663cd94",
+      "output_dir": "tripo-out\\tripo-out\\grandstand-empty-e0d41dc8"
+    },
+    "spectator_a_up": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "86d0f4ea-e942-4ba5-8209-bc9167bb90eb",
+      "output_dir": "tripo-out\\tripo-out\\spectator-a-up-86d0f4ea"
+    },
+    "spectator_a_down": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "acfc86dc-49f3-4802-9faf-d7e53cf6260d",
+      "output_dir": "tripo-out\\tripo-out\\spectator-a-down-acfc86dc"
+    },
+    "spectator_b_up": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "82b64633-55c0-42a5-9ec0-1e1aa1aa2ae6",
+      "output_dir": "tripo-out\\tripo-out\\spectator-b-up-82b64633"
+    },
+    "spectator_b_down": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "5644499a-4491-4531-914e-a30a2f968d02",
+      "output_dir": "tripo-out\\tripo-out\\spectator-b-down-5644499a"
+    },
+    "spectator_c_up": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "8d61ce7c-2549-40b5-8290-43b6fd1f8efd",
+      "output_dir": "tripo-out\\tripo-out\\spectator-c-up-8d61ce7c"
+    },
+    "spectator_c_down": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "30a26284-35af-4a07-9aa7-f947214f78c9",
+      "output_dir": "tripo-out\\tripo-out\\spectator-c-down-30a26284"
+    },
+    "tree_autumn": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "ca10d008-f32e-409a-835b-29f471618205",
+      "output_dir": "tripo-out\\tripo-out\\tree-autumn-ca10d008"
+    },
+    "tree_birch": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "bc1abe16-b288-42fa-a07b-3f1598a868b9",
+      "output_dir": "tripo-out\\tripo-out\\tree-birch-bc1abe16"
+    },
+    "bush": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "1c65e2fc-c338-4c4d-9605-04da0b1df11b",
+      "output_dir": "tripo-out\\tripo-out\\bush-1c65e2fc"
+    },
+    "cloud_b": {
+      "status": "success",
+      "attempts": 1,
+      "task_id": "46247079-29b3-48d1-b301-875c2c72716d",
+      "output_dir": "tripo-out\\tripo-out\\cloud-b-46247079"
+    }
+  }
+}

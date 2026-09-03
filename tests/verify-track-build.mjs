@@ -72,7 +72,6 @@ check('rails instanced & cast shadow', find('rails')?.isInstancedMesh && find('r
 const treeTotal = ['pines', 'trees', 'palms'].reduce((s, n) => s + (find(n)?.count || 0), 0);
 check('150..320 trees in 3 varieties', treeTotal >= 150 && treeTotal <= 320 && ['pines', 'trees', 'palms'].every((n) => find(n)?.count > 0), `${treeTotal} (${['pines', 'trees', 'palms'].map((n) => n + '=' + find(n)?.count).join(', ')})`);
 check('hundreds of spectators', (find('spectators')?.count || 0) >= 300, `${find('spectators')?.count}`);
-check('balloons 10..20', find('balloonsTinted')?.count >= 10 && find('balloonsTinted')?.count <= 20, `${find('balloonsTinted')?.count}`);
 check('gantry banner, billboards, flags, lake, mountains, rocks exist',
   !!find('banner_FINISH') && !!find('billboard_TURBO') && !!find('billboard_KART') && !!find('billboard_GP') && !!find('flags') && !!find('lake') && !!find('mountains') && !!find('rocks') && !!find('structures') && !!find('grandstands') && !!find('boostPads') && !!find('tyres'));
 

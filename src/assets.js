@@ -39,6 +39,18 @@ export const ASSET_MANIFEST = {
   item_shell_red:   { size: 0.9,  axis: 'max', ground: false },
   item_star:        { size: 0.9,  axis: 'max', ground: false },
   item_bomb:        { size: 0.85, axis: 'y',   ground: false },
+  // second batch: crowd, empty stand, extra vegetation, second cloud
+  grandstand_empty: { size: 14,   axis: 'y',   ground: true,  rotY: Math.PI / 2 },
+  spectator_a_up:   { size: 1.6,  axis: 'y',   ground: true, rotY: -Math.PI / 2 }, // generated facing -X
+  spectator_a_down: { size: 1.5,  axis: 'y',   ground: true, rotY: -Math.PI / 2 }, // generated facing -X
+  spectator_b_up:   { size: 1.6,  axis: 'y',   ground: true, rotY: -Math.PI / 2 }, // generated facing -X
+  spectator_b_down: { size: 1.5,  axis: 'y',   ground: true, rotY: -Math.PI / 2 }, // generated facing -X
+  spectator_c_up:   { size: 1.6,  axis: 'y',   ground: true, rotY: -Math.PI / 2 }, // generated facing -X
+  spectator_c_down: { size: 1.5,  axis: 'y',   ground: true, rotY: -Math.PI / 2 }, // generated facing -X
+  tree_autumn:      { size: 9,    axis: 'y',   ground: true },
+  tree_birch:       { size: 12,   axis: 'y',   ground: true },
+  bush:             { size: 1.6,  axis: 'max', ground: true },
+  cloud_b:          { size: 36,   axis: 'max', ground: false },
 };
 
 const MODEL_DIR = 'assets/models/';

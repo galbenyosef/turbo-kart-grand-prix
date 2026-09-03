@@ -163,9 +163,21 @@ export class Environment {
     const useAsset = !!(this.assets && this.assets.has('cloud'));
     let targets;
     if (useAsset) {
-      const group = this.assets.instanced('cloud', total, { castShadow: false, receiveShadow: false });
-      group.name = 'clouds';
-      targets = [{ target: group, parts: group.parts, count: total }];
+      // Alternate between the two cloud models when both exist. A model whose tallest extent is
+      // vertical (generated as an upright slab) is laid flat per instance.
+      const names = this.assets.has('cloud_b') ? ['cloud', 'cloud_b'] : ['cloud'];
+      targets = names.map((name, i) => {
+        const count = Math.floor(total / names.length) + (i < total % names.length ? 1 : 0);
+        const group = this.assets.instanced(name, count, { castShadow: false, receiveShadow: false });
+        group.name = 'clouds' + (i ? '_b' : '');
+        const box = new THREE.Box3();
+        for (const part of group.parts) {
+          if (!part.geometry.boundingBox) part.geometry.computeBoundingBox();
+          box.union(part.geometry.boundingBox);
+        }
+        const ext = box.getSize(new THREE.Vector3());
+        return { target: group, parts: group.parts, count, flat: ext.y > ext.x && ext.y > ext.z };
+      });
     } else {
       const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x2b3a4d, emissiveIntensity: 0.35 });
       const variants = [makeCloudGeometry(rand, 5), makeCloudGeometry(rand, 6), makeCloudGeometry(rand, 7)];
@@ -173,14 +185,15 @@ export class Environment {
       targets = variants.map((geo, v) => {
         const mesh = new THREE.InstancedMesh(geo, mat, per);
         mesh.name = 'clouds' + v;
-        return { target: mesh, parts: [mesh], count: per };
+        return { target: mesh, parts: [mesh], count: per, flat: false };
       });
     }
     this.clouds = [];
     this._cloudParts = [];
+    this._cloudFlat = [];
     this._cloudData = [];
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3();
-    for (const { target, parts, count } of targets) {
+    for (const { target, parts, count, flat } of targets) {
       const data = [];
       for (let i = 0; i < count; i++) {
         const ang = rand() * Math.PI * 2;
@@ -193,6 +206,7 @@ export class Environment {
         data.push(d);
         p.set(d.x, d.y, d.z);
         q.setFromAxisAngle(_yAxis, d.yaw);
+        if (flat) q.multiply(_qFlat);
         s.set(d.sx, d.sy, d.sz);
         m.compose(p, q, s);
         target.setMatrixAt(i, m);
@@ -202,6 +216,7 @@ export class Environment {
       this.group.add(target);
       this.clouds.push(target);
       this._cloudParts.push(parts);
+      this._cloudFlat.push(flat);
       this._cloudData.push(data);
     }
     this._cloudM = m; this._cloudQ = q; this._cloudP = p; this._cloudS = s;
@@ -242,12 +257,14 @@ export class Environment {
     for (let v = 0; v < this.clouds.length; v++) {
       const target = this.clouds[v];
       const data = this._cloudData[v];
+      const flat = this._cloudFlat[v];
       for (let i = 0; i < data.length; i++) {
         const d = data[i];
         d.x += d.speed * dt;
         if (d.x > -150 + 780) d.x -= 1560;
         p.set(d.x, d.y + Math.sin(elapsed * 0.15 + i) * 2.0, d.z);
         q.setFromAxisAngle(axis, d.yaw);
+        if (flat) q.multiply(_qFlat);
         s.set(d.sx, d.sy, d.sz);
         m.compose(p, q, s);
         target.setMatrixAt(i, m);
@@ -259,3 +276,4 @@ export class Environment {
 }
 
 const _yAxis = new THREE.Vector3(0, 1, 0);
+const _qFlat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);   // lays an upright cloud slab flat

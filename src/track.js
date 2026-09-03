@@ -21,10 +21,16 @@ import { ROAD_WIDTH, WALL_MARGIN } from './constants.js';
 //   finish_arch  span along local X, banner faces +Z — karts cross the line travelling +Z,
 //                so π turns the banner toward the approaching karts
 //   tyre_stack   rotationally symmetric; kept for completeness
-export const ASSET_YAW = { rail: 0, grandstand: Math.PI, finish_arch: Math.PI, tyre_stack: 0 };
+//   spectator    the six spectator_* models face +Z (turned to face the track, independent of the stand fix)
+export const ASSET_YAW = { rail: 0, grandstand: Math.PI, finish_arch: Math.PI, tyre_stack: 0, spectator: 0 };
 // Grandstands longer than the model: true → tile near-uniformly scaled copies along the stand,
 // false → one copy stretched along X to the planned length.
 export const GRANDSTAND_TILE = true;
+// Crowd rows on the empty GLB stands: depth fractions measured from the track-side edge, height
+// fractions of the stand height (rows rise linearly), seat spacing / end margin in metres and the
+// share of arms-up poses. Tune after a visual check.
+export const CROWD_TIERS = { rows: 4, depthFrom: 0.15, depthTo: 0.85, heightFrom: 0.25, heightTo: 0.75, spacing: 1.1, endMargin: 1.2, upShare: 0.4 };
+const SPECTATOR_ASSETS = ['spectator_a_up', 'spectator_b_up', 'spectator_c_up', 'spectator_a_down', 'spectator_b_down', 'spectator_c_down'];
 
 // ---------------------------------------------------------------------------
 // Small math / random helpers
@@ -771,6 +777,15 @@ function makePalmGeometry() {
   return mergeParts(parts);
 }
 
+/** Tree varieties: three with procedural fallbacks, two GLB-only (skipped when their model is missing). */
+const TREE_KINDS = [
+  { asset: 'tree_pine', name: 'pines', weight: 0.28, build: makePineGeometry },
+  { asset: 'tree_round', name: 'trees', weight: 0.22, build: makeDeciduousGeometry },
+  { asset: 'tree_palm', name: 'palms', weight: 0.18, build: makePalmGeometry, doubleSide: true },
+  { asset: 'tree_autumn', name: 'autumn', weight: 0.17, assetOnly: true },
+  { asset: 'tree_birch', name: 'birches', weight: 0.15, assetOnly: true },
+];
+
 function makeRockGeometry() {
   const g = new THREE.DodecahedronGeometry(1, 1);
   const pos = g.getAttribute('position');
@@ -790,57 +805,6 @@ function makeSpectatorGeometry() {
     withColor(new THREE.SphereGeometry(0.12, 5, 4), 0xffffff).translate(-0.4, 0.6, 0),
     withColor(new THREE.SphereGeometry(0.12, 5, 4), 0xffffff).translate(0.4, 0.6, 0),
   ]);
-}
-
-/** Splits a geometry's triangles into two by the parity of their longitude gore. */
-function splitByGore(geometry, gores) {
-  const src = geometry.index ? geometry.toNonIndexed() : geometry;
-  const pos = src.getAttribute('position'), nor = src.getAttribute('normal'), uv = src.getAttribute('uv');
-  const groups = [[], []];
-  for (let t = 0; t < pos.count / 3; t++) {
-    let cx = 0, cz = 0;
-    for (let k = 0; k < 3; k++) { cx += pos.getX(t * 3 + k); cz += pos.getZ(t * 3 + k); }
-    let ang = Math.atan2(cz, cx);
-    if (ang < 0) ang += Math.PI * 2;
-    groups[Math.floor((ang / (Math.PI * 2)) * gores) % 2].push(t);
-  }
-  return groups.map((tris) => {
-    const g = new THREE.BufferGeometry();
-    const p = new Float32Array(tris.length * 9), n = new Float32Array(tris.length * 9), u = new Float32Array(tris.length * 6);
-    tris.forEach((t, j) => {
-      for (let k = 0; k < 3; k++) {
-        const vi = t * 3 + k;
-        p[j * 9 + k * 3] = pos.getX(vi); p[j * 9 + k * 3 + 1] = pos.getY(vi); p[j * 9 + k * 3 + 2] = pos.getZ(vi);
-        n[j * 9 + k * 3] = nor.getX(vi); n[j * 9 + k * 3 + 1] = nor.getY(vi); n[j * 9 + k * 3 + 2] = nor.getZ(vi);
-        u[j * 6 + k * 2] = uv.getX(vi); u[j * 6 + k * 2 + 1] = uv.getY(vi);
-      }
-    });
-    g.setAttribute('position', new THREE.BufferAttribute(p, 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(n, 3));
-    g.setAttribute('uv', new THREE.BufferAttribute(u, 2));
-    return g;
-  });
-}
-
-/** Hot-air balloon: `tinted` gores take the per-instance colour, `plain` parts stay as coloured. */
-function makeBalloonGeometries() {
-  const [even, odd] = splitByGore(new THREE.SphereGeometry(1, 16, 12), 8);
-  even.scale(1, 1.25, 1);
-  odd.scale(1, 1.25, 1);
-  const tinted = mergeParts([
-    withColor(even, 0xffffff),
-    withColor(new THREE.CylinderGeometry(0.4, 0.28, 0.6, 16, 1, true), 0xffffff).translate(0, -1.45, 0),
-  ]);
-  const plainParts = [
-    withColor(odd, 0xf7f7f7),
-    withColor(new THREE.BoxGeometry(0.46, 0.46, 0.46), 0x7a4a22).translate(0, -2.35, 0),
-  ];
-  for (let k = 0; k < 4; k++) {
-    const a = (k * Math.PI) / 2 + Math.PI / 4;
-    plainParts.push(withColor(new THREE.CylinderGeometry(0.02, 0.02, 0.42, 4), 0x333333)
-      .translate(Math.cos(a) * 0.2, -1.94, Math.sin(a) * 0.2));
-  }
-  return { tinted, plain: mergeParts(plainParts) };
 }
 
 /** Stepped grandstand in a local frame: X along the stand, +Z away from the track. */
@@ -1392,9 +1356,9 @@ export class Track {
     this._buildGrandstands();
     this._finishStructures();
     this._buildTrees();
+    this._buildBushes();
     this._buildRocks();
     this._buildMountains();
-    this._buildBalloons();
   }
 
   _buildLake() {
@@ -1545,33 +1509,157 @@ export class Track {
     });
   }
 
-  /** Two grandstands beside the straight: GLB copies (crowd baked in) or procedural stands packed with instanced bobbing spectators. */
+  /**
+   * Seats spectators in rows on the empty GLB stands — the GLB people when any exist, else the
+   * procedural blobs — and animates them: arms-down bob and sway, arms-up hop, plus a periodic
+   * wave rippling along each stand. Per-instance parameters live in typed arrays; no allocation per frame.
+   */
+  _buildCrowd(frames) {
+    const rand = mulberry32(4242);
+    const T = CROWD_TIERS;
+    const models = SPECTATOR_ASSETS.filter((n) => this._hasAsset(n));
+    const ups = models.filter((n) => n.endsWith('_up')), downs = models.filter((n) => n.endsWith('_down'));
+    const seats = [];
+    frames.forEach((f, si) => {
+      const st = f.st;
+      const face = st.ry + Math.PI + ASSET_YAW.spectator;   // model +Z toward the track
+      for (let r = 0; r < T.rows; r++) {
+        const k = T.rows > 1 ? r / (T.rows - 1) : 0.5;
+        const depth = f.depth * lerp(T.depthFrom, T.depthTo, k);
+        const h = f.height * lerp(T.heightFrom, T.heightTo, k);
+        for (let x = -st.length / 2 + T.endMargin; x <= st.length / 2 - T.endMargin; x += T.spacing) {
+          const ax = x + (rand() - 0.5) * 0.3, ad = depth + (rand() - 0.5) * 0.3;
+          let up = rand() < T.upShare;
+          const pool = up ? (ups.length ? ups : downs) : (downs.length ? downs : ups);
+          const model = pool.length ? pool[Math.floor(rand() * pool.length)] : null;
+          if (model) up = model.endsWith('_up');
+          seats.push({
+            x: st.x + f.awayX * ad + f.alongX * ax, y: h - 0.05, z: st.z + f.awayZ * ad + f.alongZ * ax,
+            yaw: face + (rand() - 0.5) * 0.5, scale: 0.85 + rand() * 0.3, up, stand: si,
+            along: (x + st.length / 2) / st.length, model,
+          });
+        }
+      }
+    });
+    const byModel = new Map();
+    for (const s of seats) {
+      const key = s.model || 'spectators';
+      if (!byModel.has(key)) byModel.set(key, []);
+      byModel.get(key).push(s);
+    }
+    const palette = [0xe53935, 0xfdd835, 0x1e88e5, 0x43a047, 0x8e24aa, 0xfb8c00, 0x00acc1, 0xf06292, 0xffffff, 0x795548];
+    const col = new THREE.Color();
+    const sets = [];
+    for (const [key, list] of byModel) {
+      const n = list.length;
+      let target;
+      if (list[0].model) {
+        target = this.assets.instanced(key, n, { receiveShadow: true });
+        // the crowd faces away from the sun: a touch of emissive keeps the faces readable under the roof
+        for (const part of target.parts || [target]) {
+          const m = part.material;
+          if (m?.emissive && !m.userData.crowdLit) { m.emissive.setHex(0x2e2e2e); m.userData.crowdLit = true; }
+        }
+        target.name = 'spectators_' + key;
+      } else {
+        target = new THREE.InstancedMesh(makeSpectatorGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), n);
+        target.castShadow = true;
+        target.name = 'spectators';
+        for (let i = 0; i < n; i++) target.setColorAt(i, col.set(palette[Math.floor(rand() * palette.length)]));
+        target.instanceColor.needsUpdate = true;
+      }
+      const set = {
+        parts: target.parts || [target], count: n,
+        base: new Float32Array(n * 3), yaw: new Float32Array(n), scale: new Float32Array(n), phase: new Float32Array(n),
+        rate: new Float32Array(n), along: new Float32Array(n), stand: new Uint8Array(n), up: new Uint8Array(n),
+      };
+      list.forEach((s, i) => {
+        set.base[i * 3] = s.x; set.base[i * 3 + 1] = s.y; set.base[i * 3 + 2] = s.z;
+        set.yaw[i] = s.yaw; set.scale[i] = s.scale; set.phase[i] = rand() * 10;
+        set.rate[i] = s.up ? 1 + rand() * 1.5 : 1.5 + rand() * 1.5;   // hop period (s) / bob frequency (Hz)
+        set.along[i] = s.along; set.stand[i] = s.stand; set.up[i] = s.up ? 1 : 0;
+      });
+      for (const part of set.parts) part.frustumCulled = false;
+      this.group.add(target);
+      sets.push(set);
+    }
+    this._crowdSets = sets;
+    this.spectatorCount = seats.length;
+    // One wave per stand: idle (pos far away) until `next`, then a bump travelling along the stand.
+    const waves = frames.map(() => ({ t: -1, next: 8 + rand() * 7, pos: -9 }));
+    this._crowdWaves = waves;
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), e = new THREE.Euler();
+    const tick = (elapsed) => {
+      for (let si = 0; si < waves.length; si++) {
+        const w = waves[si];
+        if (w.t < 0 && elapsed >= w.next) w.t = elapsed;
+        if (w.t >= 0) {
+          w.pos = -0.2 + ((elapsed - w.t) / 2.5) * 1.4;
+          if (w.pos > 1.2) { w.t = -1; w.next = elapsed + 8 + rand() * 7; w.pos = -9; }
+        }
+      }
+      for (let s = 0; s < sets.length; s++) {
+        const { base, yaw, scale, phase, rate, along, stand, up, count, parts } = sets[s];
+        for (let i = 0; i < count; i++) {
+          const ph = phase[i];
+          let dy, roll;
+          if (up[i]) {
+            const u = (elapsed + ph) % rate[i];
+            dy = u < 0.35 ? 0.35 * Math.sin((u / 0.35) * Math.PI) : 0;
+            roll = 0.04 * Math.sin(elapsed * 2.1 + ph);
+          } else {
+            dy = 0.05 * Math.sin(elapsed * rate[i] * 6.2832 + ph);
+            roll = 0.06 * Math.sin(elapsed * rate[i] * 3.1416 + ph);
+          }
+          const wd = Math.abs(along[i] - waves[stand[i]].pos);
+          if (wd < 0.15) { const b = 1 - wd / 0.15; dy += 0.4 * b * b * (3 - 2 * b); }
+          p.set(base[i * 3], base[i * 3 + 1] + dy, base[i * 3 + 2]);
+          q.setFromEuler(e.set(0, yaw[i], roll));
+          sc.setScalar(scale[i]);
+          m.compose(p, q, sc);
+          for (let j = 0; j < parts.length; j++) parts[j].setMatrixAt(i, m);
+        }
+        for (let j = 0; j < parts.length; j++) parts[j].instanceMatrix.needsUpdate = true;
+      }
+    };
+    tick(0);
+    this._animated.push((dt, elapsed) => tick(elapsed));
+  }
+
+  /**
+   * Two grandstands beside the straight: empty GLB stands seated with an animated crowd, else the
+   * GLB stand with its baked crowd, else procedural stands packed with instanced bobbing spectators.
+   */
   _buildGrandstands() {
-    if (this._hasAsset('grandstand')) {
+    const standAsset = this._hasAsset('grandstand_empty') ? 'grandstand_empty' : this._hasAsset('grandstand') ? 'grandstand' : null;
+    if (standAsset) {
       const stands = new THREE.Group();
       stands.name = 'grandstands';
       const size = new THREE.Vector3();
+      const frames = [];
       for (const st of this._stands) {
         // Planned frame: origin on the track-side edge, X along the stand, +Z away from the track.
         // The model is centred on its footprint with the seating facing +Z, so it is turned round
         // and pushed back by half its depth; stands longer than the model are tiled (or stretched) along X.
         const alongX = Math.cos(st.ry), alongZ = -Math.sin(st.ry);
         const awayX = Math.sin(st.ry), awayZ = Math.cos(st.ry);
-        const first = this.assets.clone('grandstand', { receiveShadow: true });
+        const first = this.assets.clone(standAsset, { receiveShadow: true });
         assetBounds(first).getSize(size);
         const n = GRANDSTAND_TILE ? Math.max(1, Math.round(st.length / size.x)) : 1;
         const sx = st.length / (n * size.x);
         const cx = st.x + awayX * size.z * 0.5, cz = st.z + awayZ * size.z * 0.5;
         for (let i = 0; i < n; i++) {
-          const g = i ? this.assets.clone('grandstand', { receiveShadow: true }) : first;
+          const g = i ? this.assets.clone(standAsset, { receiveShadow: true }) : first;
           const along = (i - (n - 1) / 2) * size.x * sx;
           g.position.set(cx + alongX * along, -0.05, cz + alongZ * along);
           g.rotation.y = st.ry + Math.PI + ASSET_YAW.grandstand;
           g.scale.set(sx, 1, 1);
           stands.add(g);
         }
+        frames.push({ st, alongX, alongZ, awayX, awayZ, depth: size.z, height: size.y });
       }
       this.group.add(stands);
+      if (standAsset === 'grandstand_empty') this._buildCrowd(frames);
       return;
     }
     const rand = mulberry32(88);
@@ -1649,10 +1737,11 @@ export class Track {
     this._structureParts = null;
   }
 
-  /** ~300 trees of three varieties (pine, deciduous, palm) as three instanced sets (GLB or procedural). */
+  /** ~300 trees of up to five varieties (see TREE_KINDS) as one instanced set each (GLB or procedural). */
   _buildTrees() {
     const rand = mulberry32(2718);
-    const placements = [[], [], []];
+    const kinds = TREE_KINDS.filter((k) => !k.assetOnly || this._hasAsset(k.asset));
+    const placements = kinds.map(() => []);
     const tb = this.terrainBounds;
     const minRoad = this.wallDistance + 6.5;
     const ok = (x, z) => {
@@ -1661,10 +1750,14 @@ export class Track {
       const e = Math.max(Math.abs(x - tb.cx) / tb.hw, Math.abs(z - tb.cz) / tb.hh);
       return e < 0.82;
     };
-    // Variety from low-frequency noise so each kind forms natural groves.
+    // Variety from low-frequency noise (so each kind forms natural groves) plus a little per-tree
+    // randomness, mapped onto the available kinds' weights.
+    const totalWeight = kinds.reduce((s, k) => s + k.weight, 0);
     const pick = (x, z) => {
       const nv = fbm2(x * 0.011 + 5, z * 0.011 - 2, 3);
-      return nv < -0.12 ? 0 : nv > 0.16 ? 2 : 1;
+      let u = clamp(0.5 + nv * 0.9 + (rand() - 0.5) * 0.35, 0, 0.999) * totalWeight;
+      for (let k = 0; k < kinds.length; k++) { u -= kinds[k].weight; if (u < 0) return k; }
+      return kinds.length - 1;
     };
     const add = (x, z, kind) => {
       placements[kind].push({
@@ -1700,19 +1793,16 @@ export class Track {
       if (this.field.roadDistance(x, z) < minRoad) continue;
       add(x, z, 2);
     }
-    const builders = [makePineGeometry, makeDeciduousGeometry, makePalmGeometry];
-    const assetNames = ['tree_pine', 'tree_round', 'tree_palm'];
-    const names = ['pines', 'trees', 'palms'];
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3(), col = new THREE.Color();
-    for (let k = 0; k < 3; k++) {
+    kinds.forEach((kind, k) => {
       const list = placements[k];
-      if (!list.length) continue;
-      const useAsset = this._hasAsset(assetNames[k]);
+      if (!list.length) return;
+      const useAsset = this._hasAsset(kind.asset);
       let mesh;
       if (useAsset) {
-        mesh = this.assets.instanced(assetNames[k], list.length);
+        mesh = this.assets.instanced(kind.asset, list.length);
       } else {
-        mesh = new THREE.InstancedMesh(builders[k](), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: k === 2 ? THREE.DoubleSide : THREE.FrontSide }), list.length);
+        mesh = new THREE.InstancedMesh(kind.build(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: kind.doubleSide ? THREE.DoubleSide : THREE.FrontSide }), list.length);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
       }
@@ -1729,10 +1819,47 @@ export class Track {
         }
       });
       commitInstances(mesh);
-      mesh.name = names[k];
+      mesh.name = kind.name;
       this.group.add(mesh);
+    });
+    this._treeSpots = placements.flat();
+    this.treeCount = this._treeSpots.length;
+  }
+
+  /** ~120 GLB bushes: along the verge just outside the barriers and among the trees; never on the road. */
+  _buildBushes() {
+    if (!this._hasAsset('bush')) return;
+    const rand = mulberry32(606);
+    const spots = [];
+    const clear = (x, z, minRoad) => this.field.roadDistance(x, z) >= minRoad && this._keepOut.every((k) => Math.hypot(x - k.x, z - k.z) >= k.r);
+    let tries = 0;
+    while (spots.length < 80 && tries++ < 4000) {
+      const s = lookupAt(this.lut, rand(), {});
+      const side = rand() < 0.5 ? -1 : 1, dist = this.wallDistance + 2 + rand() * 4;
+      const x = s.x + s.rx * side * dist, z = s.z + s.rz * side * dist;
+      if (clear(x, z, this.wallDistance + 1.8)) spots.push({ x, z });
     }
-    this.treeCount = placements[0].length + placements[1].length + placements[2].length;
+    tries = 0;
+    const trees = this._treeSpots;
+    while (spots.length < 120 && tries++ < 4000 && trees.length) {
+      const t = trees[Math.floor(rand() * trees.length)];
+      const a = rand() * Math.PI * 2, d = 3 + rand() * 3;
+      const x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d;
+      if (clear(x, z, this.wallDistance + 2)) spots.push({ x, z });
+    }
+    if (!spots.length) return;
+    const mesh = this.assets.instanced('bush', spots.length);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3();
+    spots.forEach((b, i) => {
+      p.set(b.x, this.field.height(b.x, b.z) - 0.1, b.z);
+      q.setFromAxisAngle(_Y, rand() * Math.PI * 2);
+      sc.setScalar(0.7 + rand() * 0.6);
+      m.compose(p, q, sc);
+      mesh.setMatrixAt(i, m);
+    });
+    mesh.finish();
+    mesh.name = 'bushes';
+    this.group.add(mesh);
   }
 
   /** Rock clusters and singles, partially buried. */
@@ -1797,59 +1924,6 @@ export class Track {
     this.group.add(mesh);
   }
 
-  /** Floating hot-air balloons: one GLB instanced group, or tinted gores + plain parts as two InstancedMeshes sharing transforms. */
-  _buildBalloons() {
-    const rand = mulberry32(555);
-    const count = 14;
-    const tb = this.terrainBounds;
-    const data = [];
-    for (let i = 0; i < count; i++) {
-      const a = rand() * Math.PI * 2, d = 40 + rand() * 300;
-      data.push({
-        x: tb.cx + Math.cos(a) * d, z: tb.cz + Math.sin(a) * d, y: 38 + rand() * 50,
-        s: 4.5 + rand() * 2.5, phase: rand() * Math.PI * 2, yaw: rand() * Math.PI * 2, spin: (rand() - 0.5) * 0.1,
-      });
-    }
-    // `parts`: the InstancedMeshes that share the balloon transforms.
-    const useAsset = this._hasAsset('balloon');
-    let parts;
-    if (useAsset) {
-      const group = this.assets.instanced('balloon', count);
-      group.name = 'balloons';
-      parts = group.parts;
-      this.group.add(group);
-    } else {
-      const { tinted, plain } = makeBalloonGeometries();
-      const tintedMesh = new THREE.InstancedMesh(tinted, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), count);
-      const plainMesh = new THREE.InstancedMesh(plain, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), count);
-      tintedMesh.name = 'balloonsTinted';
-      plainMesh.name = 'balloonsPlain';
-      const palette = [0xe53935, 0x1e88e5, 0x43a047, 0xfdd835, 0x8e24aa, 0xfb8c00, 0x00acc1, 0xf06292];
-      const color = new THREE.Color();
-      for (let i = 0; i < count; i++) tintedMesh.setColorAt(i, color.set(palette[i % palette.length]));
-      if (tintedMesh.instanceColor) tintedMesh.instanceColor.needsUpdate = true;
-      parts = [tintedMesh, plainMesh];
-      this.group.add(tintedMesh);
-      this.group.add(plainMesh);
-    }
-    // The procedural balloon is ~3.9 units tall per scale unit; the (vertically centred) model is 13 m.
-    const unit = useAsset ? 0.3 : 1;
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), sc = new THREE.Vector3();
-    const tick = (elapsed) => {
-      for (let i = 0; i < count; i++) {
-        const b = data[i];
-        p.set(b.x + Math.sin(elapsed * 0.11 + b.phase) * 3, b.y + Math.sin(elapsed * 0.37 + b.phase) * 1.8, b.z);
-        q.setFromAxisAngle(_Y, b.yaw + elapsed * b.spin);
-        sc.setScalar(b.s * unit);
-        m.compose(p, q, sc);
-        for (let j = 0; j < parts.length; j++) parts[j].setMatrixAt(i, m);
-      }
-      for (let j = 0; j < parts.length; j++) parts[j].instanceMatrix.needsUpdate = true;
-    };
-    tick(0);
-    for (const part of parts) part.frustumCulled = false;   // they move
-    this._animated.push((dt, elapsed) => tick(elapsed));
-  }
 
   // ----- per-frame -----------------------------------------------------------------
 

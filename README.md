@@ -41,16 +41,17 @@ A second prompt asked for the procedural placeholders to be replaced with real, 
 
 > I want to update my kart game. Using Tripo for the 3D assets, replace the karts, trees, and all game assets with a cohesive low-poly asset set. The visual style should be stylized to match our game. Create separate assets for each object and integrate it in. Prioritize lightweight game-ready geometry, consistent scale and recognizable assets. Export each asset in the format required by this project and preserve the existing game logic.
 
-Claude installed and configured the [Tripo CLI](https://www.npmjs.com/package/tripo-cli), wrote one batch manifest ([tripo-assets.yaml](tripo-assets.yaml)) with a shared style suffix and per-asset face budgets, generated 19 GLBs with the `tripo-p1` low-poly model, and integrated them without touching the physics or race logic:
+Claude installed and configured the [Tripo CLI](https://www.npmjs.com/package/tripo-cli), wrote one batch manifest ([tripo-assets.yaml](tripo-assets.yaml)) with a shared style suffix and per-asset face budgets, generated 30 GLBs with the `tripo-p1` low-poly model (two batches: the world, then an animated crowd and more vegetation), and integrated them without touching the physics or race logic:
 
 | Asset | Used for |
 |---|---|
 | `kart_body`, `kart_wheel`, `driver` | Every racer — one white body / suit, recoloured per racer by a small tint shader; wheels still steer and spin |
-| `tree_pine`, `tree_round`, `tree_palm`, `rock`, `cloud`, `balloon` | Instanced scenery (hundreds of trees in a handful of draw calls) |
-| `rail`, `tyre_stack`, `grandstand`, `finish_arch` | Track furniture (the FINISH banner is kept on the generated arch) |
+| `tree_pine`, `tree_round`, `tree_palm`, `tree_autumn`, `tree_birch`, `bush`, `rock`, `cloud`, `cloud_b` | Instanced scenery (308 trees, 120 bushes and 36 clouds in a handful of draw calls) |
+| `rail`, `tyre_stack`, `grandstand_empty`, `finish_arch` | Track furniture (the FINISH banner is kept on the generated arch) |
+| `spectator_a/b/c` × `up`/`down` | 408 instanced spectators on the stands — bobbing, swaying, hopping, with a Mexican wave rolling through every 8–15 s |
 | `item_mushroom`, `item_banana`, `item_shell_green`, `item_shell_red`, `item_star`, `item_bomb` | Projectiles on the track and the item each kart is carrying |
 
-[src/assets.js](src/assets.js) loads the set, bakes a per-asset scale/orientation normalisation into the geometry (so a tree is exactly 11 m tall with its trunk at the origin, a rail is 4 m along X…), and hands out clones or `InstancedMesh` groups. Textures are downsized with gltf-transform to 512² / 1024²: the whole set is **3.2 MB**. Anything that fails to load falls back to the original procedural builder, and the road, curbs, terrain, boost pads, flags, mountains and item boxes remain procedural because they are spline-driven or animated.
+[src/assets.js](src/assets.js) loads the set, bakes a per-asset scale/orientation normalisation into the geometry (so a tree is exactly 11 m tall with its trunk at the origin, a rail is 4 m along X…), and hands out clones or `InstancedMesh` groups. Textures are downsized with gltf-transform to 512² / 1024²: the whole set is **4.4 MB**. Anything that fails to load falls back to the original procedural builder, and the road, curbs, terrain, boost pads, flags, mountains and item boxes remain procedural because they are spline-driven or animated.
 
 Regenerate or extend the set with `tripo batch run tripo-assets.yaml --concurrency 3`, then `tools/stage-assets.ps1 -Optimize`; `dev/asset-viewer.html` lays every model on a grid for checking scale and facing.
 
@@ -59,7 +60,7 @@ Regenerate or extend the set with `tripo batch run tripo-assets.yaml --concurren
 - 3-lap races against 7 AI opponents, position-weighted items, boost pads, drift mini-turbos
 - Contact that feels like something: wall hits and kart-on-kart bumps shove, rock the body, throw sparks and shake the camera
 - Mushroom, triple mushroom, banana, green shell, red (homing) shell, super star, lightning, bob-omb
-- 19 Tripo-generated low-poly assets on a procedural spline track: canvas-painted road textures, instanced scenery, ~480k triangles in ~80 draw calls
+- 30 Tripo-generated low-poly assets on a procedural spline track: canvas-painted road textures, instanced scenery, ~480k triangles in ~80 draw calls
 - Synthesised audio: speed-tracking engine, 20 sound effects, looping chiptune
 - Runs from a single `index.html` — no bundler, no build step, Three.js r160 via import map
 
@@ -109,7 +110,7 @@ src/particles.js          pooled point-sprite effects
 src/audio.js              WebAudio synth
 src/hud.js                DOM HUD, minimap, menus
 src/assets.js             GLB loader: normalisation, tint shader, instancing helpers
-assets/models/            the 19 Tripo-generated GLBs (see tripo-assets.yaml)
+assets/models/            the 30 Tripo-generated GLBs (see tripo-assets*.yaml)
 tools/, dev/              asset staging script and the asset viewer page
 tests/                    Node test harnesses
 docs/                     architecture contract, screenshots, demo video
