@@ -169,6 +169,7 @@ export class Environment {
       targets = names.map((name, i) => {
         const count = Math.floor(total / names.length) + (i < total % names.length ? 1 : 0);
         const group = this.assets.instanced(name, count, { castShadow: false, receiveShadow: false });
+      for (const part of group.parts || [group]) { const mt = part.material; if (mt?.emissive && !mt.userData.cloudLit) { mt.emissive.setHex(0x8a8f96); mt.userData.cloudLit = true; } } // lit undersides
         group.name = 'clouds' + (i ? '_b' : '');
         const box = new THREE.Box3();
         for (const part of group.parts) {
