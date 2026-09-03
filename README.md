@@ -6,6 +6,8 @@
 
 ### [▶ Play it live](https://turbo-kart-grand-prix.vercel.app)
 
+**[🎬 Watch the trailer](docs/trailer.mp4)** — 40 s, rendered in-engine with scripted cameras and an original chiptune
+
 <a href="docs/demo.mp4"><img src="docs/demo.gif" alt="Gameplay demo" width="800" /></a>
 
 <sub>Gameplay demo — <a href="docs/demo.mp4">watch the full 34-second capture with sound</a></sub>
